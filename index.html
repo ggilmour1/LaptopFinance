@@ -19,6 +19,12 @@
     --card:#A63D40;
     --card-bg:#f2e2df;
     --stamp:#8b1e1e;
+    --amber:#B5791E;
+    --score-exceptional:#1F5C3F;
+    --score-verygood:#2F6F4E;
+    --score-good:#3C5A82;
+    --score-fair:#B5791E;
+    --score-poor:#A63D40;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
@@ -110,7 +116,8 @@
     display:grid;grid-template-columns:repeat(2,1fr);gap:10px;
     margin-bottom:20px;
   }
-  @media(min-width:600px){.statusbar{grid-template-columns:repeat(4,1fr);}}
+  @media(min-width:600px){.statusbar{grid-template-columns:repeat(3,1fr);}}
+  @media(min-width:820px){.statusbar{grid-template-columns:repeat(5,1fr);}}
   .stat{
     background:#fff;border:1px solid var(--line);padding:12px 14px;
   }
@@ -166,6 +173,17 @@
   }
   .lesson b{color:var(--ink);}
 
+  .score-pill{
+    display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:11px;
+    padding:2px 8px;border-radius:10px;color:#fff;letter-spacing:.03em;
+  }
+  .factor-box{margin-top:14px;}
+  .factor-row{display:grid;grid-template-columns:130px 1fr 40px;align-items:center;gap:10px;margin:8px 0;font-size:12.5px;}
+  .factor-row .label{font-family:'IBM Plex Mono',monospace;color:#4b4636;}
+  .factor-track{height:8px;background:var(--cream-2);border:1px solid var(--line);position:relative;overflow:hidden;}
+  .factor-fill{height:100%;}
+  .factor-row .pct{font-family:'IBM Plex Mono',monospace;text-align:right;}
+
   .hidden{display:none !important;}
   footer.note{text-align:center;font-size:12px;color:#8a8168;margin-top:30px;}
 </style>
@@ -184,7 +202,8 @@
     <div class="card">
       <div class="eyebrow">The Scenario</div>
       <h2>You need a $1,200 laptop.</h2>
-      <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, and about <b>$60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs.</p>
+      <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, and about <b>$60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in dollars <i>and</i> in credit score.</p>
+      <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b>$3,000</b>.</p>
     </div>
 
     <div class="paths">
@@ -213,6 +232,7 @@
       <div class="stat"><div class="eyebrow">Cash on hand</div><div class="val" id="stat-cash">$0</div></div>
       <div class="stat"><div class="eyebrow" id="stat-debt-label">Balance owed</div><div class="val" id="stat-debt">$0</div></div>
       <div class="stat"><div class="eyebrow">Net worth</div><div class="val" id="stat-net">$0</div></div>
+      <div class="stat"><div class="eyebrow">Credit score</div><div class="val" id="stat-score">700 <span class="score-pill" id="stat-score-pill" style="background:var(--score-good);">Good</span></div></div>
     </div>
 
     <div class="card">
@@ -251,6 +271,18 @@
     </div>
 
     <div class="compare" id="compare-cols"></div>
+
+    <div class="card" style="margin-top:20px;">
+      <div class="eyebrow">Meanwhile, Your Credit Score</div>
+      <h3 style="font-size:17px;">Same 24 months, three very different files</h3>
+      <canvas id="chart-score" width="800" height="220"></canvas>
+      <div style="display:flex;gap:16px;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:6px;">
+        <span><span style="color:var(--save);">■</span> Save First</span>
+        <span><span style="color:var(--loan);">■</span> Personal Loan</span>
+        <span><span style="color:var(--card);">■</span> Credit Card</span>
+      </div>
+      <div class="factor-box" id="factor-box"></div>
+    </div>
 
     <div class="card" style="margin-top:20px;">
       <div class="eyebrow">What This Teaches</div>
@@ -310,6 +342,17 @@ function initState(path){
     totalInterestEarned: 0,
     cardMonthlyChoice: 'min', // 'min' or 'fixed70'
     history: [], // {month, cash, savings, debt, netWorth}
+    creditScoreExact: STARTING_SCORE,
+    creditHistory: [], // {month, score}
+    scoreFactors: {
+      paymentOnTimeMonths: 0,
+      paymentTotalMonths: 0,
+      utilizationSum: 0,
+      utilizationCount: 0,
+      missedPayments: 0,
+      hardInquiryApplied: false,
+      debtClearedBonusGiven: false,
+    },
     ledgerRows: [],
     finished: false,
   };
@@ -329,15 +372,110 @@ const SAVE_APY = 0.03;
 const SAVE_MONTHLY_RATE = SAVE_APY/12;
 const SAVE_DEPOSIT = SPARE_CASH;
 
+// --- Credit score modeling ---
+// A simplified FICO-style model: payment history, utilization, new-credit/inquiry
+// impact, and length-of-history dampening. Not a real scoring formula — built to
+// teach the *direction and relative size* of each factor's effect.
+const STARTING_SCORE = 700;         // all three paths start identically
+const CARD_LIMIT = 3000;            // assumed credit limit on the card
+const NEW_ACCOUNT_MONTHS = 6;       // "thin file" window: upward moves are dampened early on
+
+function clampScore(v){ return Math.max(300, Math.min(850, v)); }
+function displayScore(s){ return Math.round(clampScore(s.creditScoreExact)); }
+
+function scoreBand(score){
+  if(score >= 800) return {label:'Exceptional', color:'var(--score-exceptional)'};
+  if(score >= 740) return {label:'Very Good',   color:'var(--score-verygood)'};
+  if(score >= 670) return {label:'Good',        color:'var(--score-good)'};
+  if(score >= 580) return {label:'Fair',        color:'var(--score-fair)'};
+  return {label:'Poor', color:'var(--score-poor)'};
+}
+
+// Utilization is the single biggest lever on a revolving account: near-zero is
+// rewarded, maxed-out is punished hard — this is the standard shape (not linear).
+function utilizationDelta(util){
+  if(util <= 0.10) return 3;
+  if(util <= 0.30) return 1;
+  if(util <= 0.50) return -1;
+  if(util <= 0.75) return -3;
+  return -6;
+}
+
+function applyScoreChange(s, delta, reason, notable){
+  if(!delta) return;
+  const before = displayScore(s);
+  s.creditScoreExact = clampScore(s.creditScoreExact + delta);
+  const after = displayScore(s);
+  const actual = after - before;
+  if(notable && actual !== 0){
+    addRow({month:s.month, label:`Credit score — ${reason}`, amount:actual, balance:after, isScore:true});
+  }
+}
+
+function updateCreditScoreForMonth(s){
+  const f = s.scoreFactors;
+
+  if(s.path === 'save'){
+    // No new account opened, nothing revolving to misuse — score drifts up
+    // very slightly, reflecting a stable, low-utilization overall profile.
+    applyScoreChange(s, 0.4, 'stable profile, no new debt', false);
+    return;
+  }
+
+  // Loan and card both open a new account in month 1 — that's a hard inquiry
+  // and it dings the score a little, on purpose, regardless of how responsible
+  // you are afterwards.
+  if(s.month === 1 && !f.hardInquiryApplied){
+    f.hardInquiryApplied = true;
+    applyScoreChange(s, -8, 'hard inquiry, new account opened', true);
+  }
+
+  // New accounts have a short, thin credit history — upward movement is capped
+  // for the first several months even with perfect behavior.
+  const dampen = s.month <= NEW_ACCOUNT_MONTHS ? 0.5 : 1;
+
+  if(s.path === 'loan'){
+    f.paymentTotalMonths++;
+    f.paymentOnTimeMonths++; // this model always makes the fixed installment payment
+    applyScoreChange(s, 2 * dampen, 'on-time installment payment', false);
+  }
+
+  if(s.path === 'card'){
+    // This model always makes the chosen payment (minimum or fixed) — it never
+    // skips one — so payment history here is clean by construction. What moves
+    // the score is utilization: how much of the $3,000 limit the balance eats up,
+    // month over month. That's deliberate: it's what actually differs between
+    // "pay the minimum" and "pay more than the minimum" in real life, and it's
+    // usually the bigger, faster-moving lever on a revolving account.
+    f.paymentTotalMonths++;
+    f.paymentOnTimeMonths++;
+    const util = Math.max(0, s.debt) / CARD_LIMIT;
+    f.utilizationSum += util;
+    f.utilizationCount++;
+    const delta = utilizationDelta(util) * dampen;
+    applyScoreChange(s, delta, util > 0.5 ? 'high utilization' : 'utilization in check', false);
+  }
+
+  if((s.path==='loan' || s.path==='card') && s.debt <= 0.01 && !f.debtClearedBonusGiven){
+    f.debtClearedBonusGiven = true;
+    applyScoreChange(s, 15, 'account paid in full', true);
+  }
+}
+
 function addRow(row){
   state.ledgerRows.push(row);
   const tbody = document.getElementById('ledger-body');
   const tr = document.createElement('tr');
   if(row.isEvent) tr.classList.add('event');
   const amtClass = row.amount > 0 ? 'amt-pos' : (row.amount < 0 ? 'amt-neg' : '');
+  let amountDisplay = '';
+  if(row.amount !== null && row.amount !== undefined){
+    amountDisplay = row.isScore ? `${row.amount>0?'+':''}${row.amount} pts` : fmt(row.amount);
+  }
+  const balanceDisplay = row.isScore ? `${row.balance} pts` : fmt(row.balance);
   tr.innerHTML = `<td>${row.month}</td><td>${row.label}${row.isEvent?' <span class="stamp-badge">event</span>':''}</td>
-    <td style="text-align:right;" class="${amtClass}">${row.amount!==null? fmt(row.amount):''}</td>
-    <td style="text-align:right;">${fmt(row.balance)}</td>`;
+    <td style="text-align:right;" class="${amtClass}">${amountDisplay}</td>
+    <td style="text-align:right;">${balanceDisplay}</td>`;
   tbody.appendChild(tr);
   const scroller = document.querySelector('.ledger-scroll');
   scroller.scrollTop = scroller.scrollHeight;
@@ -355,6 +493,7 @@ function recordHistory(){
     debt: state.debt,
     netWorth: netWorth(state)
   });
+  state.creditHistory.push({ month: state.month, score: displayScore(state) });
 }
 
 function updateStatusBar(){
@@ -375,6 +514,11 @@ function updateStatusBar(){
   const netEl = document.getElementById('stat-net');
   netEl.textContent = fmt(nw);
   netEl.className = 'val ' + (nw >= 0 ? 'pos':'neg');
+
+  const score = displayScore(state);
+  const band = scoreBand(score);
+  document.getElementById('stat-score').innerHTML =
+    `${score} <span class="score-pill" id="stat-score-pill" style="background:${band.color};">${band.label}</span>`;
 }
 
 /* ---------- month simulation per path ---------- */
@@ -422,6 +566,7 @@ function simulateMonthSave(){
     state.laptopOwned = true;
     addRow({month:state.month, label:'★ Bought the laptop, in full', amount: -LAPTOP_PRICE, balance: state.savings});
   }
+  updateCreditScoreForMonth(state);
   recordHistory();
 }
 
@@ -443,6 +588,7 @@ function simulateMonthLoan(){
     state.cash += ev.amount;
     addRow({month:state.month, label:ev.label, amount: ev.amount, balance: state.cash, isEvent:true});
   }
+  updateCreditScoreForMonth(state);
   recordHistory();
 }
 
@@ -483,6 +629,7 @@ function simulateMonthCard(choiceOverride){
       addRow({month:state.month, label:ev.label, amount: ev.amount, balance: state.cash, isEvent:true});
     }
   }
+  updateCreditScoreForMonth(state);
   recordHistory();
 }
 
@@ -596,7 +743,9 @@ function finishGame(){
   results[state.path] = state;
 
   drawChart(results);
+  drawScoreChart(results);
   renderCompare(results);
+  renderFactorBreakdown(results);
   renderLesson(results);
 }
 
@@ -607,6 +756,10 @@ function renderCompare(results){
     const s = results[p];
     const nw = netWorth(s);
     const totalPaid = p==='save' ? LAPTOP_PRICE - s.totalInterestEarned : LAPTOP_PRICE + s.totalInterestPaid;
+    const finalScore = displayScore(s);
+    const band = scoreBand(finalScore);
+    const scoreStart = STARTING_SCORE;
+    const scoreChange = finalScore - scoreStart;
     const col = document.createElement('div');
     col.className = 'col ' + p + (p===state.path ? ' chosen':'');
     col.innerHTML = `
@@ -615,10 +768,52 @@ function renderCompare(results){
       <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?s.totalInterestEarned:s.totalInterestPaid)}</span></div>
       <div class="row"><span>Debt remaining, mo. 24</span><span class="v">${fmt(s.debt)}</span></div>
       <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(s.cash+s.savings)}</span></div>
-      <div class="row" style="border-bottom:none;font-weight:600;"><span>Net worth, mo. 24</span><span class="v">${fmt(nw)}</span></div>
+      <div class="row"><span>Net worth, mo. 24</span><span class="v">${fmt(nw)}</span></div>
+      <div class="row" style="border-bottom:none;font-weight:600;">
+        <span>Credit score, mo. 24</span>
+        <span class="v">${finalScore} <span class="score-pill" style="background:${band.color};">${band.label}</span>
+        <span style="font-weight:400;color:${scoreChange>=0?'#2F6F4E':'#A63D40'};">${scoreChange>=0?'+':''}${scoreChange}</span></span>
+      </div>
     `;
     container.appendChild(col);
   });
+}
+
+function bar(labelText, pct, color, note){
+  const p = Math.max(0, Math.min(100, pct));
+  return `<div class="factor-row">
+    <div class="label">${labelText}</div>
+    <div class="factor-track"><div class="factor-fill" style="width:${p}%;background:${color};"></div></div>
+    <div class="pct">${note !== undefined ? note : Math.round(p)+'%'}</div>
+  </div>`;
+}
+
+function renderFactorBreakdown(results){
+  const box = document.getElementById('factor-box');
+  const s = results[state.path];
+  const f = s.scoreFactors;
+  const band = scoreBand(displayScore(s));
+
+  let html = `<div class="eyebrow" style="margin-bottom:4px;">Why your score moved — ${PATH_META[state.path].name}</div>`;
+
+  if(state.path === 'save'){
+    html += `<p style="font-size:13px;color:#4b4636;margin:6px 0 10px;">You never opened a new credit account, so there's no inquiry, no utilization, and nothing to miss a payment on. Your score barely moved — it's not a reward for saving, just the absence of any new risk.</p>`;
+    html += bar('Net movement', 50, 'var(--score-good)', `${displayScore(s)-STARTING_SCORE>=0?'+':''}${displayScore(s)-STARTING_SCORE} pts`);
+  } else {
+    const onTimePct = f.paymentTotalMonths ? (f.paymentOnTimeMonths/f.paymentTotalMonths*100) : 100;
+    html += bar('Payment history', onTimePct, onTimePct>=95?'var(--score-verygood)':onTimePct>=80?'var(--score-fair)':'var(--score-poor)');
+    if(state.path === 'card'){
+      const avgUtil = f.utilizationCount ? (f.utilizationSum/f.utilizationCount*100) : 0;
+      html += bar('Avg. credit utilization', avgUtil, avgUtil<=30?'var(--score-verygood)':avgUtil<=50?'var(--score-fair)':'var(--score-poor)');
+    } else {
+      html += `<p style="font-size:12.5px;color:#4b4636;margin:6px 0;">Installment loans (like this one) don't carry a utilization ratio the way revolving credit cards do — the balance is expected to go down on a fixed schedule.</p>`;
+    }
+    html += bar('New credit / inquiry impact', 100, 'var(--ink)', '-8 pts, month 1');
+    if(f.debtClearedBonusGiven){
+      html += bar('Paid off in full', 100, 'var(--score-verygood)', '+15 pts');
+    }
+  }
+  box.innerHTML = html;
 }
 
 function renderLesson(results){
@@ -639,6 +834,15 @@ function renderLesson(results){
     if(state.cardMonthlyChoice === 'min'){
       html += ` Notice also what happened when an unplanned expense hit: with no savings cushion, it went straight onto the card, growing the balance further. That's the credit-card trap — it doesn't just cost more, it makes emergencies more expensive too.`;
     }
+  }
+  const scoreNow = displayScore(s);
+  const scoreChange = scoreNow - STARTING_SCORE;
+  if(state.path === 'save'){
+    html += ` Your credit score barely moved (${scoreChange>=0?'+':''}${scoreChange} pts) — saving doesn't build credit history, it just avoids putting any at risk.`;
+  } else if(state.path === 'loan'){
+    html += ` Your credit score ended at <b>${scoreNow}</b> (${scoreChange>=0?'+':''}${scoreChange} from where you started) — a small inquiry dip up front, recovered and then some through 24 straight on-time payments and paying the loan off in full.`;
+  } else {
+    html += ` Your credit score ended at <b>${scoreNow}</b> (${scoreChange>=0?'+':''}${scoreChange}) — driven mostly by how high your balance sat relative to your $${CARD_LIMIT.toLocaleString()} limit each month. ${state.cardMonthlyChoice==='min' ? 'Minimum payments kept utilization high for most of the two years, which is the single biggest drag here.' : 'Paying more than the minimum brought utilization down faster, which is what let the score recover.'}`;
   }
   html += `<br><br>Across all three paths this run, <b>${PATH_META[best].name}</b> left you with the highest net worth at month 24: ${fmt(netWorth(results[best]))}.`;
   box.innerHTML = html;
@@ -689,6 +893,57 @@ function drawChart(results){
   ctx.globalAlpha = 1;
 
   // x axis labels
+  ctx.fillStyle = '#6b6350';
+  for(let m=0;m<=MONTHS;m+=6){
+    ctx.fillText('mo '+m, x(m)-10, h-6);
+  }
+}
+
+function drawScoreChart(results){
+  const canvas = document.getElementById('chart-score');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0,0,w,h);
+
+  const allVals = [];
+  ['save','loan','card'].forEach(p=> results[p].creditHistory.forEach(pt=>allVals.push(pt.score)));
+  const minV = Math.max(300, Math.min(...allVals) - 15);
+  const maxV = Math.min(850, Math.max(...allVals, STARTING_SCORE) + 15);
+  const pad = {l:60,r:20,t:16,b:26};
+  const plotW = w - pad.l - pad.r;
+  const plotH = h - pad.t - pad.b;
+
+  function x(m){ return pad.l + (m/MONTHS)*plotW; }
+  function y(v){ return pad.t + plotH - ((v-minV)/(maxV-minV))*plotH; }
+
+  // starting-score reference line
+  ctx.strokeStyle = '#c9bfa1';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4,3]);
+  ctx.beginPath();
+  ctx.moveTo(pad.l, y(STARTING_SCORE));
+  ctx.lineTo(w-pad.r, y(STARTING_SCORE));
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#6b6350';
+  ctx.font = '11px IBM Plex Mono, monospace';
+  ctx.fillText('start '+STARTING_SCORE, 6, y(STARTING_SCORE)+4);
+  ctx.fillText(Math.round(maxV), 6, y(maxV)+4);
+  ctx.fillText(Math.round(minV), 6, y(minV)+4);
+
+  ['save','loan','card'].forEach(p=>{
+    ctx.strokeStyle = PATH_META[p].color;
+    ctx.lineWidth = p===state.path ? 3 : 2;
+    ctx.globalAlpha = p===state.path ? 1 : 0.55;
+    ctx.beginPath();
+    results[p].creditHistory.forEach((pt,i)=>{
+      const px = x(pt.month), py = y(pt.score);
+      if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    });
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+
   ctx.fillStyle = '#6b6350';
   for(let m=0;m<=MONTHS;m+=6){
     ctx.fillText('mo '+m, x(m)-10, h-6);
