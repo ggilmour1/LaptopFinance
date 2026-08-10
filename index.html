@@ -137,6 +137,7 @@
   }
   table.ledger td{padding:7px 6px;border-bottom:1px dashed var(--line);}
   table.ledger tr.event td{background:#fff7e6;}
+  table.ledger tr.missed td{background:#f6dcdc;}
   .amt-pos{color:var(--save);}
   .amt-neg{color:var(--stamp);}
   .stamp-badge{
@@ -144,6 +145,9 @@
     border:1.5px solid var(--stamp);color:var(--stamp);padding:1px 6px;
     transform:rotate(-3deg);letter-spacing:.05em;text-transform:uppercase;
     border-radius:2px;
+  }
+  .stamp-badge.missed-badge{
+    background:var(--stamp);color:#fff;border-color:var(--stamp);
   }
 
   .prompt{
@@ -202,8 +206,8 @@
     <div class="card">
       <div class="eyebrow">The Scenario</div>
       <h2>You need a $1,200 laptop.</h2>
-      <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, and about <b>$60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in dollars <i>and</i> in credit score.</p>
-      <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b>$3,000</b>.</p>
+      <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, a small <b>$150 cushion</b> already sitting in checking, and about <b>$60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in dollars <i>and</i> in credit score.</p>
+      <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b>$3,000</b>. If a payment ever costs more than your cushion plus that month's spare cash, it gets <b>skipped</b> — a late fee, and a real hit to your score.</p>
     </div>
 
     <div class="paths">
@@ -334,12 +338,13 @@ function initState(path){
   return {
     path,
     month: 0,
-    cash: 0,
+    cash: STARTING_CASH_BUFFER,
     savings: 0,
     debt: path === 'loan' ? LAPTOP_PRICE : (path === 'card' ? LAPTOP_PRICE : 0),
     laptopOwned: path !== 'save',
     totalInterestPaid: 0,
     totalInterestEarned: 0,
+    totalLateFees: 0,
     cardMonthlyChoice: 'min', // 'min' or 'fixed70'
     history: [], // {month, cash, savings, debt, netWorth}
     creditScoreExact: STARTING_SCORE,
@@ -350,9 +355,12 @@ function initState(path){
       utilizationSum: 0,
       utilizationCount: 0,
       missedPayments: 0,
+      missedStreak: 0,
+      hasDelinquencyMark: false,
       hardInquiryApplied: false,
       debtClearedBonusGiven: false,
     },
+    _missedThisMonth: false,
     ledgerRows: [],
     finished: false,
   };
@@ -371,6 +379,14 @@ const CARD_MONTHLY_RATE = CARD_APR/12;
 const SAVE_APY = 0.03;
 const SAVE_MONTHLY_RATE = SAVE_APY/12;
 const SAVE_DEPOSIT = SPARE_CASH;
+
+// --- Cash-flow realism ---
+// A small existing checking-account cushion, separate from laptop savings —
+// most people aren't at exactly $0. This is what a missed payment actually
+// erodes: once it's gone, a payment that costs more than that month's spare
+// cash genuinely cannot be made.
+const STARTING_CASH_BUFFER = 150;
+const LATE_FEE = 35; // flat late fee charged to the balance on a missed payment
 
 // --- Credit score modeling ---
 // A simplified FICO-style model: payment history, utilization, new-credit/inquiry
@@ -412,6 +428,17 @@ function applyScoreChange(s, delta, reason, notable){
   }
 }
 
+// Missed payments are modeled as the heaviest, fastest-moving factor —
+// consistent with real scoring, where payment history outweighs utilization.
+// The first miss hurts most; a longer streak keeps hurting but with
+// diminishing marginal damage, which mirrors how bureaus treat 30/60/90-day
+// delinquencies.
+function missedPaymentPenalty(streak){
+  if(streak <= 1) return -65;
+  if(streak === 2) return -35;
+  return -20;
+}
+
 function updateCreditScoreForMonth(s){
   const f = s.scoreFactors;
 
@@ -434,25 +461,39 @@ function updateCreditScoreForMonth(s){
   // for the first several months even with perfect behavior.
   const dampen = s.month <= NEW_ACCOUNT_MONTHS ? 0.5 : 1;
 
+  if(s._missedThisMonth){
+    f.paymentTotalMonths++;
+    const penalty = missedPaymentPenalty(f.missedStreak);
+    const ordinal = f.missedStreak === 1 ? '1st' : f.missedStreak === 2 ? '2nd' : f.missedStreak === 3 ? '3rd' : f.missedStreak + 'th';
+    applyScoreChange(s, penalty, `payment missed (${ordinal} in a row)`, true);
+    // The miss dominates this month — no utilization/on-time credit on top of it.
+    if((s.path==='loan' || s.path==='card') && s.debt <= 0.01 && !f.debtClearedBonusGiven){
+      f.debtClearedBonusGiven = true;
+      applyScoreChange(s, 15, 'account paid in full', true);
+    }
+    return;
+  }
+
   if(s.path === 'loan'){
     f.paymentTotalMonths++;
-    f.paymentOnTimeMonths++; // this model always makes the fixed installment payment
-    applyScoreChange(s, 2 * dampen, 'on-time installment payment', false);
+    f.paymentOnTimeMonths++;
+    let delta = 2 * dampen;
+    if(f.hasDelinquencyMark) delta *= 0.5; // a past miss keeps weighing on the file
+    applyScoreChange(s, delta, 'on-time installment payment', false);
   }
 
   if(s.path === 'card'){
-    // This model always makes the chosen payment (minimum or fixed) — it never
-    // skips one — so payment history here is clean by construction. What moves
-    // the score is utilization: how much of the $3,000 limit the balance eats up,
-    // month over month. That's deliberate: it's what actually differs between
-    // "pay the minimum" and "pay more than the minimum" in real life, and it's
-    // usually the bigger, faster-moving lever on a revolving account.
+    // Utilization is the other big lever on a revolving account: how much of
+    // the $3,000 limit the balance eats up, month over month. This is what
+    // actually differs between "pay the minimum" and "pay more than the
+    // minimum" — right up until cash can't cover the payment at all.
     f.paymentTotalMonths++;
     f.paymentOnTimeMonths++;
     const util = Math.max(0, s.debt) / CARD_LIMIT;
     f.utilizationSum += util;
     f.utilizationCount++;
-    const delta = utilizationDelta(util) * dampen;
+    let delta = utilizationDelta(util) * dampen;
+    if(f.hasDelinquencyMark && delta > 0) delta *= 0.5; // a past miss keeps weighing on the file
     applyScoreChange(s, delta, util > 0.5 ? 'high utilization' : 'utilization in check', false);
   }
 
@@ -467,13 +508,15 @@ function addRow(row){
   const tbody = document.getElementById('ledger-body');
   const tr = document.createElement('tr');
   if(row.isEvent) tr.classList.add('event');
+  if(row.isMissed) tr.classList.add('missed');
   const amtClass = row.amount > 0 ? 'amt-pos' : (row.amount < 0 ? 'amt-neg' : '');
   let amountDisplay = '';
   if(row.amount !== null && row.amount !== undefined){
     amountDisplay = row.isScore ? `${row.amount>0?'+':''}${row.amount} pts` : fmt(row.amount);
   }
   const balanceDisplay = row.isScore ? `${row.balance} pts` : fmt(row.balance);
-  tr.innerHTML = `<td>${row.month}</td><td>${row.label}${row.isEvent?' <span class="stamp-badge">event</span>':''}</td>
+  const badge = row.isMissed ? ' <span class="stamp-badge missed-badge">missed</span>' : (row.isEvent ? ' <span class="stamp-badge">event</span>' : '');
+  tr.innerHTML = `<td>${row.month}</td><td>${row.label}${badge}</td>
     <td style="text-align:right;" class="${amtClass}">${amountDisplay}</td>
     <td style="text-align:right;">${balanceDisplay}</td>`;
   tbody.appendChild(tr);
@@ -517,8 +560,9 @@ function updateStatusBar(){
 
   const score = displayScore(state);
   const band = scoreBand(score);
+  const flag = state.scoreFactors.hasDelinquencyMark ? ' <span class="stamp-badge missed-badge">late mark</span>' : '';
   document.getElementById('stat-score').innerHTML =
-    `${score} <span class="score-pill" id="stat-score-pill" style="background:${band.color};">${band.label}</span>`;
+    `${score} <span class="score-pill" id="stat-score-pill" style="background:${band.color};">${band.label}</span>${flag}`;
 }
 
 /* ---------- month simulation per path ---------- */
@@ -572,20 +616,41 @@ function simulateMonthSave(){
 
 function simulateMonthLoan(){
   state.month++;
-  const interestPortion = state.debt * LOAN_MONTHLY_RATE;
-  const principalPortion = Math.min(LOAN_PAYMENT - interestPortion, state.debt);
-  state.debt -= principalPortion;
-  state.totalInterestPaid += interestPortion;
-  addRow({month:state.month, label:`Loan payment (${fmt(interestPortion)} interest + ${fmt(principalPortion)} principal)`, amount: -LOAN_PAYMENT, balance: state.debt});
-  // remaining spare cash accumulates as cash savings
-  const leftover = SPARE_CASH - LOAN_PAYMENT;
-  if(leftover !== 0){
-    state.cash += leftover;
-    addRow({month:state.month, label: leftover>=0 ? 'Spare cash left over, saved' : 'Extra needed beyond spare cash (from pocket)', amount: leftover, balance: state.cash});
+  state._missedThisMonth = false;
+  const payoffAmount = state.debt * (1 + LOAN_MONTHLY_RATE);
+  const payment = state.debt > 0.01 ? Math.min(LOAN_PAYMENT, payoffAmount) : 0;
+  const available = state.cash + SPARE_CASH;
+
+  if(payment > 0 && available >= payment){
+    const interestPortion = state.debt * LOAN_MONTHLY_RATE;
+    const principalPortion = Math.min(payment - interestPortion, state.debt);
+    state.debt -= principalPortion;
+    state.totalInterestPaid += interestPortion;
+    state.cash = available - payment;
+    addRow({month:state.month, label:`Loan payment (${fmt(interestPortion)} interest + ${fmt(principalPortion)} principal)`, amount: -payment, balance: state.debt});
+    if(state.scoreFactors.missedStreak > 0) state.scoreFactors.missedStreak = 0;
+  } else if(payment > 0){
+    // Not enough cash to cover this month's installment at all — the payment
+    // is skipped outright. Interest still accrues on the unpaid balance, and
+    // a late fee is added on top.
+    const interestPortion = state.debt * LOAN_MONTHLY_RATE;
+    state.debt += interestPortion + LATE_FEE;
+    state.totalInterestPaid += interestPortion;
+    state.totalLateFees += LATE_FEE;
+    state.cash = available; // keep whatever cash exists — it went to essentials instead
+    state.scoreFactors.missedStreak++;
+    state.scoreFactors.missedPayments++;
+    state.scoreFactors.hasDelinquencyMark = true;
+    state._missedThisMonth = true;
+    addRow({month:state.month, label:`⚠ Payment missed — not enough cash for the loan installment (+${fmt(LATE_FEE)} late fee)`, amount: LATE_FEE, balance: state.debt, isMissed:true});
+  } else {
+    state.cash = available;
   }
+
   const ev = EVENTS[state.month];
   if(ev){
     state.cash += ev.amount;
+    if(state.cash < 0) state.cash = 0; // a shortfall here just means it was absorbed elsewhere, unmodeled
     addRow({month:state.month, label:ev.label, amount: ev.amount, balance: state.cash, isEvent:true});
   }
   updateCreditScoreForMonth(state);
@@ -594,26 +659,36 @@ function simulateMonthLoan(){
 
 function simulateMonthCard(choiceOverride){
   state.month++;
+  state._missedThisMonth = false;
   const interest = state.debt * CARD_MONTHLY_RATE;
   state.totalInterestPaid += interest;
   state.debt += interest;
   addRow({month:state.month, label:'Interest charged', amount: interest, balance: state.debt});
 
   const choice = choiceOverride || state.cardMonthlyChoice;
-  let payment;
-  if(choice === 'min'){
-    payment = Math.max(25, state.debt * 0.03);
-  } else {
-    payment = 70; // disciplined fixed payment, similar to loan payment
-  }
-  payment = Math.min(payment, state.debt);
-  state.debt -= payment;
-  addRow({month:state.month, label: choice==='min' ? 'Minimum payment' : 'Fixed payment ($70)', amount: -payment, balance: state.debt});
+  let desired = choice === 'min' ? Math.max(25, state.debt * 0.03) : 70;
+  desired = Math.min(desired, state.debt);
+  const available = state.cash + SPARE_CASH;
 
-  const leftover = SPARE_CASH - payment;
-  state.cash += leftover;
-  if(Math.abs(leftover) > 0.01){
-    addRow({month:state.month, label: leftover>=0 ? 'Spare cash left over, saved' : 'Extra needed beyond spare cash (from pocket)', amount: leftover, balance: state.cash});
+  if(desired <= 0.01){
+    state.cash = available;
+  } else if(available >= desired){
+    state.debt -= desired;
+    state.cash = available - desired;
+    addRow({month:state.month, label: choice==='min' ? 'Minimum payment' : 'Fixed payment ($70)', amount: -desired, balance: state.debt});
+    if(state.scoreFactors.missedStreak > 0) state.scoreFactors.missedStreak = 0;
+  } else {
+    // Cash plus this month's spare income isn't enough to cover even the
+    // chosen payment — it's skipped entirely, a late fee is added, and the
+    // balance keeps accruing interest untouched.
+    state.cash = available;
+    state.debt += LATE_FEE;
+    state.totalLateFees += LATE_FEE;
+    state.scoreFactors.missedStreak++;
+    state.scoreFactors.missedPayments++;
+    state.scoreFactors.hasDelinquencyMark = true;
+    state._missedThisMonth = true;
+    addRow({month:state.month, label:`⚠ Payment missed — not enough cash for the card payment (+${fmt(LATE_FEE)} late fee)`, amount: LATE_FEE, balance: state.debt, isMissed:true});
   }
 
   const ev = EVENTS[state.month];
@@ -755,20 +830,23 @@ function renderCompare(results){
   ['save','loan','card'].forEach(p=>{
     const s = results[p];
     const nw = netWorth(s);
-    const totalPaid = p==='save' ? LAPTOP_PRICE - s.totalInterestEarned : LAPTOP_PRICE + s.totalInterestPaid;
+    const totalPaid = p==='save' ? LAPTOP_PRICE - s.totalInterestEarned : LAPTOP_PRICE + s.totalInterestPaid + s.totalLateFees;
     const finalScore = displayScore(s);
     const band = scoreBand(finalScore);
     const scoreStart = STARTING_SCORE;
     const scoreChange = finalScore - scoreStart;
+    const missCount = s.scoreFactors.missedPayments;
     const col = document.createElement('div');
     col.className = 'col ' + p + (p===state.path ? ' chosen':'');
     col.innerHTML = `
       <h4>${PATH_META[p].name}${p===state.path?' · your path':''}</h4>
       <div class="row"><span>Total actually paid</span><span class="v">${fmt(totalPaid)}</span></div>
       <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?s.totalInterestEarned:s.totalInterestPaid)}</span></div>
+      ${p!=='save' && s.totalLateFees>0 ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(s.totalLateFees)}</span></div>` : ''}
       <div class="row"><span>Debt remaining, mo. 24</span><span class="v">${fmt(s.debt)}</span></div>
       <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(s.cash+s.savings)}</span></div>
       <div class="row"><span>Net worth, mo. 24</span><span class="v">${fmt(nw)}</span></div>
+      ${p!=='save' ? `<div class="row"><span>Payments missed</span><span class="v" style="color:${missCount>0?'#A63D40':'inherit'};">${missCount}</span></div>` : ''}
       <div class="row" style="border-bottom:none;font-weight:600;">
         <span>Credit score, mo. 24</span>
         <span class="v">${finalScore} <span class="score-pill" style="background:${band.color};">${band.label}</span>
@@ -800,8 +878,13 @@ function renderFactorBreakdown(results){
     html += `<p style="font-size:13px;color:#4b4636;margin:6px 0 10px;">You never opened a new credit account, so there's no inquiry, no utilization, and nothing to miss a payment on. Your score barely moved — it's not a reward for saving, just the absence of any new risk.</p>`;
     html += bar('Net movement', 50, 'var(--score-good)', `${displayScore(s)-STARTING_SCORE>=0?'+':''}${displayScore(s)-STARTING_SCORE} pts`);
   } else {
+    if(f.missedPayments > 0){
+      html += `<div style="background:#f6dcdc;border:1.5px solid var(--stamp);padding:10px 12px;margin-bottom:12px;font-size:13px;color:#5a1f1f;">
+        <b>⚠ ${f.missedPayments} payment${f.missedPayments>1?'s':''} missed.</b> This is the single heaviest factor in the model — worth more, per event, than months of utilization or on-time payments combined. Missed payments also leave a mark that keeps dampening how fast the score can recover afterward.
+      </div>`;
+    }
     const onTimePct = f.paymentTotalMonths ? (f.paymentOnTimeMonths/f.paymentTotalMonths*100) : 100;
-    html += bar('Payment history', onTimePct, onTimePct>=95?'var(--score-verygood)':onTimePct>=80?'var(--score-fair)':'var(--score-poor)');
+    html += bar('Payment history (on-time months)', onTimePct, onTimePct>=95?'var(--score-verygood)':onTimePct>=80?'var(--score-fair)':'var(--score-poor)');
     if(state.path === 'card'){
       const avgUtil = f.utilizationCount ? (f.utilizationSum/f.utilizationCount*100) : 0;
       html += bar('Avg. credit utilization', avgUtil, avgUtil<=30?'var(--score-verygood)':avgUtil<=50?'var(--score-fair)':'var(--score-poor)');
@@ -826,6 +909,9 @@ function renderLesson(results){
     html = `You waited, but you paid the least. Saving cost you <b>time</b> — the laptop only arrived once you'd fully funded it — and in exchange you <b>earned</b> ${fmt(save.totalInterestEarned)} in interest instead of paying it. That's the trade-off of saving: patience now, in exchange for money kept later.`;
   } else if(state.path === 'loan'){
     html = `A personal loan got you the laptop immediately, but you paid <b>${fmt(loan.totalInterestPaid)}</b> in interest for that convenience — the price of borrowing at a fixed, predictable rate. Compare that to saving first: you paid ${fmt(loan.totalInterestPaid + save.totalInterestEarned)} more, total, than the saver did, just to have the laptop 24 months sooner.`;
+    if(loan.scoreFactors.missedPayments > 0){
+      html += ` Along the way, you missed ${loan.scoreFactors.missedPayments} installment${loan.scoreFactors.missedPayments>1?'s':''} — the fixed payment is the same every month whether or not your cash flow can absorb it, and when it can't, the loan doesn't bend.`;
+    }
   } else {
     const chosenLabel = state.cardMonthlyChoice === 'min' ? 'minimum payments' : 'a disciplined fixed payment';
     html = `You used ${chosenLabel} on the card. Credit cards carry a much higher rate (24% APR here, vs 9% for the loan) — and minimum payments are designed to stretch debt out for years while interest compounds on top of interest. You paid <b>${fmt(card.totalInterestPaid)}</b> in interest`;
@@ -833,7 +919,13 @@ function renderLesson(results){
     else { html += `.`; }
     if(state.cardMonthlyChoice === 'min'){
       html += ` Notice also what happened when an unplanned expense hit: with no savings cushion, it went straight onto the card, growing the balance further. That's the credit-card trap — it doesn't just cost more, it makes emergencies more expensive too.`;
+    } else if(card.scoreFactors.missedPayments > 0){
+      html += ` Notice the trade-off: paying more than the minimum shrinks the balance faster, but it also leaves a thinner cash cushion — and when an expense hit a stretched budget, a payment got skipped entirely. Minimum payments are "safer" for your cash flow precisely because they demand so little of it; that ease is exactly what makes them a trap over the long run.`;
     }
+  }
+  if(s.scoreFactors.missedPayments > 0){
+    const worstPenalty = missedPaymentPenalty(1);
+    html += ` A missed payment alone cost as much as ${Math.abs(worstPenalty)} points in a single month — more than the entire card path's utilization swing typically does across the whole two years.`;
   }
   const scoreNow = displayScore(s);
   const scoreChange = scoreNow - STARTING_SCORE;
