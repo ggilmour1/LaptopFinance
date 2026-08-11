@@ -176,6 +176,27 @@
   }
   .slider-readout .num{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;margin-top:2px;}
 
+  .choice-block{
+    display:flex;flex-direction:column;align-items:flex-start;gap:3px;
+    text-align:left;min-width:180px;padding-top:9px;padding-bottom:9px;
+  }
+  .choice-title{font-size:13px;}
+  .choice-note{
+    font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:none;
+    letter-spacing:0;opacity:.8;
+  }
+  .choice-note.bad{color:#e8c9c9;}
+  .btn.choice-block.ghost .choice-note.bad{color:var(--stamp);opacity:1;}
+
+  .score-consequence{
+    display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;
+    background:#f6dcdc;border:1.5px solid var(--stamp);padding:9px 12px;margin:10px 0;
+    font-size:12.5px;color:#5a1f1f;
+  }
+  .score-consequence-val{
+    font-family:'IBM Plex Mono',monospace;font-weight:600;white-space:nowrap;
+  }
+
   .ledger-scroll{max-height:340px;overflow-y:auto;border:1px solid var(--line);padding:0 4px;}
 
   /* Summary */
@@ -878,6 +899,19 @@ function showPromptIfNeeded(){
   return false;
 }
 
+// Preview what a missed/partial payment would do to the score, without
+// mutating any state. The result is deliberately independent of the amount
+// paid — that's the point being shown to the player.
+function previewMissedPenalty(){
+  const before = displayScore(state);
+  const streakAfter = state.scoreFactors.missedStreak + 1;
+  const penalty = missedPaymentPenalty(streakAfter);
+  const after = Math.round(clampScore(state.creditScoreExact + penalty));
+  const band = scoreBand(after);
+  const ordinal = streakAfter === 1 ? '1st' : streakAfter === 2 ? '2nd' : streakAfter === 3 ? '3rd' : streakAfter + 'th';
+  return { before, after, band, ordinal, penalty: after - before };
+}
+
 function promptShortfall(due, available){
   uiLocked = true;
   renderShortfallChoice(due, available);
@@ -885,15 +919,26 @@ function promptShortfall(due, available){
 
 function renderShortfallChoice(due, available){
   const shortBy = due - available;
+  const preview = previewMissedPenalty();
+  const backupNote = state.scoreFactors.backupCardOpened ? 'no additional score impact' : '-8 pts one-time, new account';
   const area = document.getElementById('prompt-area');
   area.innerHTML = `
     <div class="prompt">
       <div class="eyebrow">Decision — Month ${state.month} — Payment shortfall</div>
       <p>This month's payment is <b>${fmt(due)}</b>, but you only have <b>${fmt(available)}</b> on hand — short by <b>${fmt(shortBy)}</b>. How do you handle it?</p>
       <div class="btn-row">
-        <button class="btn ghost" id="choice-partial-open">Pay part of it — choose how much</button>
-        <button class="btn ghost" id="choice-overdraft">Overdraft to pay in full (+${fmt(OVERDRAFT_FEE)} bank fee, no score hit)</button>
-        <button class="btn" id="choice-backup">Charge the rest to a backup card</button>
+        <button class="btn ghost choice-block" id="choice-partial-open">
+          <span class="choice-title">Pay part of it — choose how much</span>
+          <span class="choice-note bad">drops score to ~${preview.after} (${preview.band.label})</span>
+        </button>
+        <button class="btn ghost choice-block" id="choice-overdraft">
+          <span class="choice-title">Overdraft to pay in full</span>
+          <span class="choice-note">+${fmt(OVERDRAFT_FEE)} bank fee · no score impact</span>
+        </button>
+        <button class="btn choice-block" id="choice-backup">
+          <span class="choice-title">Charge the rest to a backup card</span>
+          <span class="choice-note">${backupNote}</span>
+        </button>
       </div>
     </div>`;
   document.getElementById('choice-partial-open').onclick = ()=>{ renderPartialSlider(due, available); };
@@ -904,10 +949,15 @@ function renderShortfallChoice(due, available){
 function renderPartialSlider(due, available){
   const area = document.getElementById('prompt-area');
   const initial = Math.round(available / 2);
+  const preview = previewMissedPenalty();
   area.innerHTML = `
     <div class="prompt">
       <div class="eyebrow">Decision — Month ${state.month} — How much do you pay?</div>
-      <p>You have <b>${fmt(available)}</b> on hand. Anything less than the full <b>${fmt(due)}</b> due reports the same way to your score, whether you pay $0 or ${fmt(Math.max(0,available-1))} — what changes is your balance and your cash cushion going into next month.</p>
+      <p>You have <b>${fmt(available)}</b> on hand. This still counts as your <b>${preview.ordinal}</b> missed payment in a row — the score consequence below is fixed no matter what you choose on the slider. What actually moves with the slider is your balance and your cash cushion.</p>
+      <div class="score-consequence">
+        <span>Score after confirming, regardless of amount paid:</span>
+        <span class="score-consequence-val">${preview.before} → ${preview.after} <span class="score-pill" style="background:${preview.band.color};">${preview.band.label}</span></span>
+      </div>
       <div style="margin:16px 0 10px;">
         <input type="range" id="partial-slider" min="0" max="${available.toFixed(2)}" step="1" value="${initial}">
         <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b6350;margin-top:4px;">
