@@ -156,6 +156,26 @@
   .prompt .eyebrow{color:var(--stamp);}
   .prompt p{margin:6px 0 12px;font-size:14.5px;line-height:1.5;}
 
+  input[type="range"]{
+    -webkit-appearance:none;appearance:none;
+    width:100%;height:6px;background:var(--cream-2);border:1px solid var(--line);
+    border-radius:3px;outline:none;
+  }
+  input[type="range"]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;
+    width:18px;height:18px;border-radius:50%;background:var(--ink);
+    border:2px solid #fbf8f0;box-shadow:0 0 0 1px var(--ink);cursor:pointer;
+  }
+  input[type="range"]::-moz-range-thumb{
+    width:18px;height:18px;border-radius:50%;background:var(--ink);
+    border:2px solid #fbf8f0;box-shadow:0 0 0 1px var(--ink);cursor:pointer;
+  }
+  .slider-readout{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:10px;
+    background:var(--cream-2);border:1px solid var(--line);padding:10px 12px;margin:10px 0;
+  }
+  .slider-readout .num{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;margin-top:2px;}
+
   .ledger-scroll{max-height:340px;overflow-y:auto;border:1px solid var(--line);padding:0 4px;}
 
   /* Summary */
@@ -650,7 +670,7 @@ function beginMonthCard(choiceOverride){
 // This is shared by both loan and card months — the shortfall-handling choice
 // works the same way regardless of which kind of debt it is.
 
-function resolveDebtPayment(resolution, due, available){
+function resolveDebtPayment(resolution, due, available, partialAmount){
   const s = state;
   const label = s.path === 'loan' ? 'Loan payment' : (s.cardMonthlyChoice === 'min' ? 'Minimum payment' : 'Fixed payment ($70)');
   let interestPortion = 0, principalPortion = due;
@@ -677,11 +697,13 @@ function resolveDebtPayment(resolution, due, available){
     if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
 
   } else if(resolution === 'partial'){
-    // Pay everything you have — but anything less than what's due still
-    // reports as a missed payment in real life, so the credit consequence
-    // is the same as paying nothing. What's different is the balance: it
-    // actually goes down by however much you did pay.
-    const partial = available;
+    // The player chooses how much of the available cash to put toward it —
+    // anywhere from $0 up to everything on hand. Anything less than what's
+    // due still reports as a missed payment (same score consequence whether
+    // you pay $0 or $1 short), but the amount changes two real things: how
+    // much the balance actually drops, and how much cash cushion survives
+    // into next month.
+    const partial = Math.max(0, Math.min(available, partialAmount === undefined ? available : partialAmount));
     if(s.path === 'loan'){
       const interestCovered = Math.min(partial, interestPortion);
       const principal = Math.max(0, partial - interestCovered);
@@ -690,7 +712,7 @@ function resolveDebtPayment(resolution, due, available){
     } else {
       s.debt -= partial;
     }
-    s.cash = 0;
+    s.cash = available - partial;
     addRow({month:s.month, label:`Partial payment — paid ${fmt(partial)} of ${fmt(due)} due`, amount:-partial, balance:s.debt, isMissed:true});
     s.debt += LATE_FEE;
     s.totalLateFees += LATE_FEE;
@@ -857,22 +879,77 @@ function showPromptIfNeeded(){
 }
 
 function promptShortfall(due, available){
-  const shortBy = due - available;
   uiLocked = true;
+  renderShortfallChoice(due, available);
+}
+
+function renderShortfallChoice(due, available){
+  const shortBy = due - available;
   const area = document.getElementById('prompt-area');
   area.innerHTML = `
     <div class="prompt">
       <div class="eyebrow">Decision — Month ${state.month} — Payment shortfall</div>
       <p>This month's payment is <b>${fmt(due)}</b>, but you only have <b>${fmt(available)}</b> on hand — short by <b>${fmt(shortBy)}</b>. How do you handle it?</p>
       <div class="btn-row">
-        <button class="btn ghost" id="choice-partial">Pay what you can (${fmt(available)}) — still reports as late</button>
+        <button class="btn ghost" id="choice-partial-open">Pay part of it — choose how much</button>
         <button class="btn ghost" id="choice-overdraft">Overdraft to pay in full (+${fmt(OVERDRAFT_FEE)} bank fee, no score hit)</button>
         <button class="btn" id="choice-backup">Charge the rest to a backup card</button>
       </div>
     </div>`;
-  document.getElementById('choice-partial').onclick = ()=>{ uiLocked=false; resolveDebtPayment('partial', due, available); wrapUpMonth(); };
+  document.getElementById('choice-partial-open').onclick = ()=>{ renderPartialSlider(due, available); };
   document.getElementById('choice-overdraft').onclick = ()=>{ uiLocked=false; resolveDebtPayment('overdraft', due, available); wrapUpMonth(); };
   document.getElementById('choice-backup').onclick = ()=>{ uiLocked=false; resolveDebtPayment('card', due, available); wrapUpMonth(); };
+}
+
+function renderPartialSlider(due, available){
+  const area = document.getElementById('prompt-area');
+  const initial = Math.round(available / 2);
+  area.innerHTML = `
+    <div class="prompt">
+      <div class="eyebrow">Decision — Month ${state.month} — How much do you pay?</div>
+      <p>You have <b>${fmt(available)}</b> on hand. Anything less than the full <b>${fmt(due)}</b> due reports the same way to your score, whether you pay $0 or ${fmt(Math.max(0,available-1))} — what changes is your balance and your cash cushion going into next month.</p>
+      <div style="margin:16px 0 10px;">
+        <input type="range" id="partial-slider" min="0" max="${available.toFixed(2)}" step="1" value="${initial}">
+        <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b6350;margin-top:4px;">
+          <span>$0 — keep all your cash</span>
+          <span>${fmt(available)} — keep none</span>
+        </div>
+      </div>
+      <div class="slider-readout">
+        <div><div class="eyebrow">You'll pay</div><div class="num" id="partial-pay-amt">${fmt(initial)}</div></div>
+        <div><div class="eyebrow">Balance drops by</div><div class="num" id="partial-debt-drop">${fmt(initial)}</div></div>
+        <div><div class="eyebrow">Cash you keep</div><div class="num" id="partial-cash-left">${fmt(available-initial)}</div></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn ghost" id="preset-0">Pay $0</button>
+        <button class="btn ghost" id="preset-half">Pay half</button>
+        <button class="btn ghost" id="preset-all">Pay all ${fmt(available)}</button>
+        <button class="btn" id="confirm-partial">Confirm</button>
+        <button class="btn ghost" id="back-to-choices">← Back</button>
+      </div>
+    </div>`;
+
+  const slider = document.getElementById('partial-slider');
+  const payEl = document.getElementById('partial-pay-amt');
+  const debtEl = document.getElementById('partial-debt-drop');
+  const cashEl = document.getElementById('partial-cash-left');
+  function refresh(){
+    const v = parseFloat(slider.value);
+    payEl.textContent = fmt(v);
+    debtEl.textContent = fmt(v);
+    cashEl.textContent = fmt(available - v);
+  }
+  slider.oninput = refresh;
+  document.getElementById('preset-0').onclick = ()=>{ slider.value = 0; refresh(); };
+  document.getElementById('preset-half').onclick = ()=>{ slider.value = (available/2).toFixed(2); refresh(); };
+  document.getElementById('preset-all').onclick = ()=>{ slider.value = available.toFixed(2); refresh(); };
+  document.getElementById('back-to-choices').onclick = ()=>{ renderShortfallChoice(due, available); };
+  document.getElementById('confirm-partial').onclick = ()=>{
+    const amt = parseFloat(slider.value);
+    uiLocked = false;
+    resolveDebtPayment('partial', due, available, amt);
+    wrapUpMonth();
+  };
 }
 
 function wrapUpMonth(){
