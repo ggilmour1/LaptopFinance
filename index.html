@@ -196,6 +196,11 @@
   .score-consequence-val{
     font-family:'IBM Plex Mono',monospace;font-weight:600;white-space:nowrap;
   }
+  .score-consequence-next{
+    background:transparent;border-style:dashed;border-color:#c99;color:#7a4a4a;
+    font-size:11.5px;margin-top:-4px;
+  }
+  .score-consequence-next .score-consequence-val{font-weight:500;opacity:.85;}
 
   .ledger-scroll{max-height:340px;overflow-y:auto;border:1px solid var(--line);padding:0 4px;}
 
@@ -350,7 +355,7 @@
 
 const LAPTOP_PRICE = 1200;
 const MONTHS = 24;
-const SPARE_CASH = 60; // monthly discretionary cash available in all paths
+const SPARE_CASH = 40; // monthly discretionary cash available in all paths
 
 const PATH_META = {
   save: { name: 'Save First', color: '#2F6F4E' },
@@ -361,10 +366,11 @@ const PATH_META = {
 // Fixed random-event script so all three paths can be compared fairly
 // (same life happens to you regardless of which path you picked)
 const EVENTS = {
-  4:  { label: 'Car repair', amount: -180 },
-  9:  { label: 'Work bonus', amount: 220 },
-  14: { label: 'Vet bill', amount: -140 },
+  4:  { label: 'Car repair', amount: -250 },
+  9:  { label: 'Work bonus', amount: 100 },
+  14: { label: 'Vet bill', amount: -180 },
   19: { label: 'Birthday gift from family', amount: 100 },
+  21: { label: 'Christmas shopping', amount: 80},
 };
 
 let state = null;
@@ -429,7 +435,7 @@ const SAVE_DEPOSIT = SPARE_CASH;
 // most people aren't at exactly $0. This is what a missed payment actually
 // erodes: once it's gone, a payment that costs more than that month's spare
 // cash genuinely cannot be made.
-const STARTING_CASH_BUFFER = 150;
+const STARTING_CASH_BUFFER = 75;
 const LATE_FEE = 35;      // flat late fee charged to the balance on a missed/partial payment
 const OVERDRAFT_FEE = 35; // flat bank fee for overdrafting to cover a payment in full
 
@@ -509,7 +515,7 @@ function updateCreditScoreForMonth(s){
   if(s._missedThisMonth){
     f.paymentTotalMonths++;
     const penalty = missedPaymentPenalty(f.missedStreak);
-    const ordinal = f.missedStreak === 1 ? '1st' : f.missedStreak === 2 ? '2nd' : f.missedStreak === 3 ? '3rd' : f.missedStreak + 'th';
+    const ordinal = ordinalOf(f.missedStreak);
     applyScoreChange(s, penalty, `payment missed (${ordinal} in a row)`, true);
     // The miss dominates this month — no utilization/on-time credit on top of it.
     if((s.path==='loan' || s.path==='card') && s.debt <= 0.01 && !f.debtClearedBonusGiven){
@@ -899,17 +905,30 @@ function showPromptIfNeeded(){
   return false;
 }
 
+function ordinalOf(n){
+  return n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : n + 'th';
+}
+
 // Preview what a missed/partial payment would do to the score, without
 // mutating any state. The result is deliberately independent of the amount
-// paid — that's the point being shown to the player.
+// paid — that's the point being shown to the player. Also forecasts one step
+// further: what a second consecutive miss, next month, would do on top of it.
 function previewMissedPenalty(){
   const before = displayScore(state);
   const streakAfter = state.scoreFactors.missedStreak + 1;
   const penalty = missedPaymentPenalty(streakAfter);
-  const after = Math.round(clampScore(state.creditScoreExact + penalty));
+  const afterExact = clampScore(state.creditScoreExact + penalty);
+  const after = Math.round(afterExact);
   const band = scoreBand(after);
-  const ordinal = streakAfter === 1 ? '1st' : streakAfter === 2 ? '2nd' : streakAfter === 3 ? '3rd' : streakAfter + 'th';
-  return { before, after, band, ordinal, penalty: after - before };
+  const ordinal = ordinalOf(streakAfter);
+
+  const nextStreak = streakAfter + 1;
+  const nextPenalty = missedPaymentPenalty(nextStreak);
+  const nextAfter = Math.round(clampScore(afterExact + nextPenalty));
+  const nextBand = scoreBand(nextAfter);
+  const nextOrdinal = ordinalOf(nextStreak);
+
+  return { before, after, band, ordinal, penalty: after - before, nextAfter, nextBand, nextOrdinal, nextPenalty: nextAfter - after };
 }
 
 function promptShortfall(due, available){
@@ -957,6 +976,10 @@ function renderPartialSlider(due, available){
       <div class="score-consequence">
         <span>Score after confirming, regardless of amount paid:</span>
         <span class="score-consequence-val">${preview.before} → ${preview.after} <span class="score-pill" style="background:${preview.band.color};">${preview.band.label}</span></span>
+      </div>
+      <div class="score-consequence score-consequence-next">
+        <span>If a payment gets missed again next month (${preview.nextOrdinal} in a row):</span>
+        <span class="score-consequence-val">~${preview.after} → ~${preview.nextAfter} <span class="score-pill" style="background:${preview.nextBand.color};">${preview.nextBand.label}</span></span>
       </div>
       <div style="margin:16px 0 10px;">
         <input type="range" id="partial-slider" min="0" max="${available.toFixed(2)}" step="1" value="${initial}">
