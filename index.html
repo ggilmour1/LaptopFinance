@@ -207,7 +207,7 @@
       <div class="eyebrow">The Scenario</div>
       <h2>You need a $1,200 laptop.</h2>
       <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, a small <b>$150 cushion</b> already sitting in checking, and about <b>$60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in dollars <i>and</i> in credit score.</p>
-      <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b>$3,000</b>. If a payment ever costs more than your cushion plus that month's spare cash, it gets <b>skipped</b> — a late fee, and a real hit to your score.</p>
+      <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b>$3,000</b>. If a payment ever costs more than your cushion plus that month's spare cash, you'll have to decide how to cover it — <b>pay what you can, overdraft your account, or charge it to a backup card</b>. Each costs you differently.</p>
     </div>
 
     <div class="paths">
@@ -345,6 +345,8 @@ function initState(path){
     totalInterestPaid: 0,
     totalInterestEarned: 0,
     totalLateFees: 0,
+    totalOverdraftFees: 0,
+    backupCardDebt: 0,
     cardMonthlyChoice: 'min', // 'min' or 'fixed70'
     history: [], // {month, cash, savings, debt, netWorth}
     creditScoreExact: STARTING_SCORE,
@@ -359,6 +361,7 @@ function initState(path){
       hasDelinquencyMark: false,
       hardInquiryApplied: false,
       debtClearedBonusGiven: false,
+      backupCardOpened: false,
     },
     _missedThisMonth: false,
     ledgerRows: [],
@@ -386,7 +389,8 @@ const SAVE_DEPOSIT = SPARE_CASH;
 // erodes: once it's gone, a payment that costs more than that month's spare
 // cash genuinely cannot be made.
 const STARTING_CASH_BUFFER = 150;
-const LATE_FEE = 35; // flat late fee charged to the balance on a missed payment
+const LATE_FEE = 35;      // flat late fee charged to the balance on a missed/partial payment
+const OVERDRAFT_FEE = 35; // flat bank fee for overdrafting to cover a payment in full
 
 // --- Credit score modeling ---
 // A simplified FICO-style model: payment history, utilization, new-credit/inquiry
@@ -525,7 +529,7 @@ function addRow(row){
 }
 
 function netWorth(s){
-  return s.savings + s.cash - s.debt;
+  return s.savings + s.cash - s.debt - (s.backupCardDebt||0);
 }
 
 function recordHistory(){
@@ -550,8 +554,10 @@ function updateStatusBar(){
     debtVal.className = 'val';
   } else {
     debtLabel.textContent = 'Balance owed';
-    debtVal.textContent = fmt(state.debt);
-    debtVal.className = 'val ' + (state.debt > 0 ? 'neg' : 'pos');
+    const totalDebt = state.debt + (state.backupCardDebt||0);
+    const backupNote = state.backupCardDebt > 0.5 ? ` <span style="font-size:11px;font-weight:400;">(${fmt(state.backupCardDebt)} backup card)</span>` : '';
+    debtVal.innerHTML = fmt(totalDebt) + backupNote;
+    debtVal.className = 'val ' + (totalDebt > 0 ? 'neg' : 'pos');
   }
   const nw = netWorth(state);
   const netEl = document.getElementById('stat-net');
@@ -614,50 +620,18 @@ function simulateMonthSave(){
   recordHistory();
 }
 
-function simulateMonthLoan(){
+/* ---------- loan & card: begin month (accrue interest, compute what's due) ---------- */
+
+function beginMonthLoan(){
   state.month++;
   state._missedThisMonth = false;
   const payoffAmount = state.debt * (1 + LOAN_MONTHLY_RATE);
-  const payment = state.debt > 0.01 ? Math.min(LOAN_PAYMENT, payoffAmount) : 0;
+  const due = state.debt > 0.01 ? Math.min(LOAN_PAYMENT, payoffAmount) : 0;
   const available = state.cash + SPARE_CASH;
-
-  if(payment > 0 && available >= payment){
-    const interestPortion = state.debt * LOAN_MONTHLY_RATE;
-    const principalPortion = Math.min(payment - interestPortion, state.debt);
-    state.debt -= principalPortion;
-    state.totalInterestPaid += interestPortion;
-    state.cash = available - payment;
-    addRow({month:state.month, label:`Loan payment (${fmt(interestPortion)} interest + ${fmt(principalPortion)} principal)`, amount: -payment, balance: state.debt});
-    if(state.scoreFactors.missedStreak > 0) state.scoreFactors.missedStreak = 0;
-  } else if(payment > 0){
-    // Not enough cash to cover this month's installment at all — the payment
-    // is skipped outright. Interest still accrues on the unpaid balance, and
-    // a late fee is added on top.
-    const interestPortion = state.debt * LOAN_MONTHLY_RATE;
-    state.debt += interestPortion + LATE_FEE;
-    state.totalInterestPaid += interestPortion;
-    state.totalLateFees += LATE_FEE;
-    state.cash = available; // keep whatever cash exists — it went to essentials instead
-    state.scoreFactors.missedStreak++;
-    state.scoreFactors.missedPayments++;
-    state.scoreFactors.hasDelinquencyMark = true;
-    state._missedThisMonth = true;
-    addRow({month:state.month, label:`⚠ Payment missed — not enough cash for the loan installment (+${fmt(LATE_FEE)} late fee)`, amount: LATE_FEE, balance: state.debt, isMissed:true});
-  } else {
-    state.cash = available;
-  }
-
-  const ev = EVENTS[state.month];
-  if(ev){
-    state.cash += ev.amount;
-    if(state.cash < 0) state.cash = 0; // a shortfall here just means it was absorbed elsewhere, unmodeled
-    addRow({month:state.month, label:ev.label, amount: ev.amount, balance: state.cash, isEvent:true});
-  }
-  updateCreditScoreForMonth(state);
-  recordHistory();
+  return { due, available };
 }
 
-function simulateMonthCard(choiceOverride){
+function beginMonthCard(choiceOverride){
   state.month++;
   state._missedThisMonth = false;
   const interest = state.debt * CARD_MONTHLY_RATE;
@@ -666,46 +640,150 @@ function simulateMonthCard(choiceOverride){
   addRow({month:state.month, label:'Interest charged', amount: interest, balance: state.debt});
 
   const choice = choiceOverride || state.cardMonthlyChoice;
-  let desired = choice === 'min' ? Math.max(25, state.debt * 0.03) : 70;
-  desired = Math.min(desired, state.debt);
+  let due = choice === 'min' ? Math.max(25, state.debt * 0.03) : 70;
+  due = Math.min(due, state.debt);
   const available = state.cash + SPARE_CASH;
+  return { due, available, choice };
+}
 
-  if(desired <= 0.01){
-    state.cash = available;
-  } else if(available >= desired){
-    state.debt -= desired;
-    state.cash = available - desired;
-    addRow({month:state.month, label: choice==='min' ? 'Minimum payment' : 'Fixed payment ($70)', amount: -desired, balance: state.debt});
-    if(state.scoreFactors.missedStreak > 0) state.scoreFactors.missedStreak = 0;
-  } else {
-    // Cash plus this month's spare income isn't enough to cover even the
-    // chosen payment — it's skipped entirely, a late fee is added, and the
-    // balance keeps accruing interest untouched.
-    state.cash = available;
-    state.debt += LATE_FEE;
-    state.totalLateFees += LATE_FEE;
-    state.scoreFactors.missedStreak++;
-    state.scoreFactors.missedPayments++;
-    state.scoreFactors.hasDelinquencyMark = true;
-    state._missedThisMonth = true;
-    addRow({month:state.month, label:`⚠ Payment missed — not enough cash for the card payment (+${fmt(LATE_FEE)} late fee)`, amount: LATE_FEE, balance: state.debt, isMissed:true});
+/* ---------- resolve the payment: full, partial, overdraft, or backup card ---------- */
+// This is shared by both loan and card months — the shortfall-handling choice
+// works the same way regardless of which kind of debt it is.
+
+function resolveDebtPayment(resolution, due, available){
+  const s = state;
+  const label = s.path === 'loan' ? 'Loan payment' : (s.cardMonthlyChoice === 'min' ? 'Minimum payment' : 'Fixed payment ($70)');
+  let interestPortion = 0, principalPortion = due;
+  if(s.path === 'loan' && due > 0){
+    interestPortion = s.debt * LOAN_MONTHLY_RATE;
+    principalPortion = due; // (due already sized to cover interest + principal, or full payoff)
   }
 
+  if(due <= 0.01){
+    s.cash = available;
+    return;
+  }
+
+  if(resolution === 'full'){
+    if(s.path === 'loan'){
+      const principal = Math.min(due - interestPortion, s.debt);
+      s.debt -= principal;
+      s.totalInterestPaid += interestPortion;
+    } else {
+      s.debt -= due;
+    }
+    s.cash = available - due;
+    addRow({month:s.month, label, amount:-due, balance:s.debt});
+    if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
+
+  } else if(resolution === 'partial'){
+    // Pay everything you have — but anything less than what's due still
+    // reports as a missed payment in real life, so the credit consequence
+    // is the same as paying nothing. What's different is the balance: it
+    // actually goes down by however much you did pay.
+    const partial = available;
+    if(s.path === 'loan'){
+      const interestCovered = Math.min(partial, interestPortion);
+      const principal = Math.max(0, partial - interestCovered);
+      s.debt = s.debt + interestPortion - partial; // accrue interest, subtract whatever was paid
+      s.totalInterestPaid += interestPortion;
+    } else {
+      s.debt -= partial;
+    }
+    s.cash = 0;
+    addRow({month:s.month, label:`Partial payment — paid ${fmt(partial)} of ${fmt(due)} due`, amount:-partial, balance:s.debt, isMissed:true});
+    s.debt += LATE_FEE;
+    s.totalLateFees += LATE_FEE;
+    addRow({month:s.month, label:'Late fee — below the amount due', amount:LATE_FEE, balance:s.debt, isMissed:true});
+    s.scoreFactors.missedStreak++;
+    s.scoreFactors.missedPayments++;
+    s.scoreFactors.hasDelinquencyMark = true;
+    s._missedThisMonth = true;
+
+  } else if(resolution === 'overdraft'){
+    // Paid in full and on time — the bank covers the gap. Overdrafts aren't
+    // reported to credit bureaus, so there's no score hit, only a fee and a
+    // cash hole that has to be climbed back out of.
+    if(s.path === 'loan'){
+      const principal = Math.min(due - interestPortion, s.debt);
+      s.debt -= principal;
+      s.totalInterestPaid += interestPortion;
+    } else {
+      s.debt -= due;
+    }
+    s.cash = available - due - OVERDRAFT_FEE;
+    s.totalOverdraftFees += OVERDRAFT_FEE;
+    addRow({month:s.month, label:`${label} (paid in full)`, amount:-due, balance:s.debt});
+    addRow({month:s.month, label:'Overdraft fee', amount:OVERDRAFT_FEE, balance:s.cash});
+    if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
+
+  } else if(resolution === 'card'){
+    // Paid in full and on time — just funded by a backup credit card instead
+    // of cash. The original account looks clean; the cost moves to a new,
+    // higher-rate balance that keeps compounding for the rest of the game.
+    if(s.path === 'loan'){
+      const principal = Math.min(due - interestPortion, s.debt);
+      s.debt -= principal;
+      s.totalInterestPaid += interestPortion;
+    } else {
+      s.debt -= due;
+    }
+    s.backupCardDebt = (s.backupCardDebt||0) + due;
+    s.cash = available;
+    if(!s.scoreFactors.backupCardOpened){
+      s.scoreFactors.backupCardOpened = true;
+      applyScoreChange(s, -8, 'backup card opened to cover a payment', true);
+    }
+    addRow({month:s.month, label:`${label} — covered by a backup credit card`, amount:-due, balance:s.debt});
+    if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
+  }
+}
+
+/* ---------- finish the month: events, backup-card interest, scoring, bookkeeping ---------- */
+
+function applyEventsAndScoring(){
   const ev = EVENTS[state.month];
   if(ev){
     if(ev.amount < 0 && state.cash < -ev.amount){
-      // not enough cash cushion -> forced onto the card, the trap
+      // not enough cash cushion -> the shortfall goes onto revolving debt —
+      // the card itself if that's the path, otherwise a backup card
       const shortfall = -ev.amount - state.cash;
       state.cash = 0;
-      state.debt += shortfall;
-      addRow({month:state.month, label: ev.label + ' — no cash cushion, charged to card', amount: ev.amount, balance: state.debt, isEvent:true});
+      if(state.path === 'card'){
+        state.debt += shortfall;
+        addRow({month:state.month, label: ev.label + ' — no cash cushion, charged to card', amount: ev.amount, balance: state.debt, isEvent:true});
+      } else {
+        if(!state.scoreFactors.backupCardOpened){
+          state.scoreFactors.backupCardOpened = true;
+          applyScoreChange(state, -8, 'backup card opened to cover an expense', true);
+        }
+        state.backupCardDebt = (state.backupCardDebt||0) + shortfall;
+        addRow({month:state.month, label: ev.label + ' — no cash cushion, charged to backup card', amount: ev.amount, balance: state.backupCardDebt, isEvent:true});
+      }
     } else {
       state.cash += ev.amount;
       addRow({month:state.month, label:ev.label, amount: ev.amount, balance: state.cash, isEvent:true});
     }
   }
+  if(state.backupCardDebt > 0){
+    state.backupCardDebt *= (1 + CARD_MONTHLY_RATE);
+  }
   updateCreditScoreForMonth(state);
   recordHistory();
+}
+
+// Runs one full debt-path month with no player interaction — used both for
+// the two background comparison paths at game end, and for fast-forward,
+// where a shortfall (if any) is auto-resolved rather than prompted.
+function simulateMonthAuto(path, cardChoice, autoResolution){
+  if(path === 'save'){ simulateMonthSave(); return; }
+  const begin = path === 'loan' ? beginMonthLoan() : beginMonthCard(cardChoice);
+  if(begin.due <= 0.01 || begin.available >= begin.due){
+    resolveDebtPayment('full', begin.due, begin.available);
+  } else {
+    resolveDebtPayment(autoResolution || 'overdraft', begin.due, begin.available);
+  }
+  applyEventsAndScoring();
 }
 
 /* ---------- background "silent" simulations for comparison ---------- */
@@ -719,9 +797,7 @@ function runFullSim(path, cardChoice){
   window.__suppress = true;
   addRow = (row)=>{ s.ledgerRows.push(row); };
   for(let m=0;m<MONTHS;m++){
-    if(path==='save') simulateMonthSave();
-    else if(path==='loan') simulateMonthLoan();
-    else simulateMonthCard(cardChoice);
+    simulateMonthAuto(path, cardChoice, 'overdraft');
   }
   addRow = realAddRow;
   state = oldState;
@@ -756,11 +832,14 @@ function startGame(path){
   updateStatusBar();
 }
 
+let uiLocked = false;
+
 function showPromptIfNeeded(){
   const area = document.getElementById('prompt-area');
   area.innerHTML = '';
   if(state.path === 'card' && [6,12,18].includes(state.month+1)){
     const nextMonth = state.month+1;
+    uiLocked = true;
     area.innerHTML = `
       <div class="prompt">
         <div class="eyebrow">Decision — Month ${nextMonth}</div>
@@ -770,18 +849,34 @@ function showPromptIfNeeded(){
           <button class="btn" id="choice-fixed">Pay a fixed $70</button>
         </div>
       </div>`;
-    document.getElementById('choice-min').onclick = ()=>{ state.cardMonthlyChoice='min'; advanceMonth(); };
-    document.getElementById('choice-fixed').onclick = ()=>{ state.cardMonthlyChoice='fixed70'; advanceMonth(); };
+    document.getElementById('choice-min').onclick = ()=>{ state.cardMonthlyChoice='min'; uiLocked=false; advanceMonth(false); };
+    document.getElementById('choice-fixed').onclick = ()=>{ state.cardMonthlyChoice='fixed70'; uiLocked=false; advanceMonth(false); };
     return true;
   }
   return false;
 }
 
-function advanceMonth(){
-  if(state.month >= MONTHS){ return; }
-  if(state.path==='save') simulateMonthSave();
-  else if(state.path==='loan') simulateMonthLoan();
-  else simulateMonthCard();
+function promptShortfall(due, available){
+  const shortBy = due - available;
+  uiLocked = true;
+  const area = document.getElementById('prompt-area');
+  area.innerHTML = `
+    <div class="prompt">
+      <div class="eyebrow">Decision — Month ${state.month} — Payment shortfall</div>
+      <p>This month's payment is <b>${fmt(due)}</b>, but you only have <b>${fmt(available)}</b> on hand — short by <b>${fmt(shortBy)}</b>. How do you handle it?</p>
+      <div class="btn-row">
+        <button class="btn ghost" id="choice-partial">Pay what you can (${fmt(available)}) — still reports as late</button>
+        <button class="btn ghost" id="choice-overdraft">Overdraft to pay in full (+${fmt(OVERDRAFT_FEE)} bank fee, no score hit)</button>
+        <button class="btn" id="choice-backup">Charge the rest to a backup card</button>
+      </div>
+    </div>`;
+  document.getElementById('choice-partial').onclick = ()=>{ uiLocked=false; resolveDebtPayment('partial', due, available); wrapUpMonth(); };
+  document.getElementById('choice-overdraft').onclick = ()=>{ uiLocked=false; resolveDebtPayment('overdraft', due, available); wrapUpMonth(); };
+  document.getElementById('choice-backup').onclick = ()=>{ uiLocked=false; resolveDebtPayment('card', due, available); wrapUpMonth(); };
+}
+
+function wrapUpMonth(){
+  applyEventsAndScoring();
   updateStatusBar();
   document.getElementById('prompt-area').innerHTML = '';
   if(state.month >= MONTHS){
@@ -789,14 +884,42 @@ function advanceMonth(){
   }
 }
 
+function advanceMonth(auto){
+  if(state.month >= MONTHS){ return; }
+
+  if(state.path === 'save'){
+    simulateMonthSave();
+    updateStatusBar();
+    document.getElementById('prompt-area').innerHTML = '';
+    if(state.month >= MONTHS){ finishGame(); }
+    return;
+  }
+
+  const begin = state.path === 'loan' ? beginMonthLoan() : beginMonthCard();
+
+  if(begin.due <= 0.01 || begin.available >= begin.due){
+    resolveDebtPayment('full', begin.due, begin.available);
+    wrapUpMonth();
+  } else if(auto){
+    // fast-forward / background sim: auto-resolve via overdraft so the game
+    // never silently corrupts a month waiting on input that won't come
+    resolveDebtPayment('overdraft', begin.due, begin.available);
+    wrapUpMonth();
+  } else {
+    promptShortfall(begin.due, begin.available);
+  }
+}
+
 document.getElementById('btn-next').addEventListener('click', ()=>{
+  if(uiLocked) return;
   if(showPromptIfNeeded()) return;
-  advanceMonth();
+  advanceMonth(false);
 });
 
 document.getElementById('btn-fastforward').addEventListener('click', ()=>{
+  if(uiLocked) return;
   while(state.month < MONTHS){
-    advanceMonth();
+    advanceMonth(true);
   }
 });
 
@@ -830,12 +953,13 @@ function renderCompare(results){
   ['save','loan','card'].forEach(p=>{
     const s = results[p];
     const nw = netWorth(s);
-    const totalPaid = p==='save' ? LAPTOP_PRICE - s.totalInterestEarned : LAPTOP_PRICE + s.totalInterestPaid + s.totalLateFees;
+    const totalPaid = p==='save' ? LAPTOP_PRICE - s.totalInterestEarned : LAPTOP_PRICE + s.totalInterestPaid + s.totalLateFees + (s.totalOverdraftFees||0);
     const finalScore = displayScore(s);
     const band = scoreBand(finalScore);
     const scoreStart = STARTING_SCORE;
     const scoreChange = finalScore - scoreStart;
     const missCount = s.scoreFactors.missedPayments;
+    const totalDebt = s.debt + (s.backupCardDebt||0);
     const col = document.createElement('div');
     col.className = 'col ' + p + (p===state.path ? ' chosen':'');
     col.innerHTML = `
@@ -843,10 +967,12 @@ function renderCompare(results){
       <div class="row"><span>Total actually paid</span><span class="v">${fmt(totalPaid)}</span></div>
       <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?s.totalInterestEarned:s.totalInterestPaid)}</span></div>
       ${p!=='save' && s.totalLateFees>0 ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(s.totalLateFees)}</span></div>` : ''}
-      <div class="row"><span>Debt remaining, mo. 24</span><span class="v">${fmt(s.debt)}</span></div>
+      ${p!=='save' && s.totalOverdraftFees>0 ? `<div class="row"><span>Overdraft fees charged</span><span class="v">${fmt(s.totalOverdraftFees)}</span></div>` : ''}
+      <div class="row"><span>Debt remaining, mo. 24</span><span class="v">${fmt(totalDebt)}</span></div>
+      ${p!=='save' && s.backupCardDebt>0.5 ? `<div class="row"><span>— of which, backup card</span><span class="v">${fmt(s.backupCardDebt)}</span></div>` : ''}
       <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(s.cash+s.savings)}</span></div>
       <div class="row"><span>Net worth, mo. 24</span><span class="v">${fmt(nw)}</span></div>
-      ${p!=='save' ? `<div class="row"><span>Payments missed</span><span class="v" style="color:${missCount>0?'#A63D40':'inherit'};">${missCount}</span></div>` : ''}
+      ${p!=='save' ? `<div class="row"><span>Payments missed/partial</span><span class="v" style="color:${missCount>0?'#A63D40':'inherit'};">${missCount}</span></div>` : ''}
       <div class="row" style="border-bottom:none;font-weight:600;">
         <span>Credit score, mo. 24</span>
         <span class="v">${finalScore} <span class="score-pill" style="background:${band.color};">${band.label}</span>
@@ -925,7 +1051,13 @@ function renderLesson(results){
   }
   if(s.scoreFactors.missedPayments > 0){
     const worstPenalty = missedPaymentPenalty(1);
-    html += ` A missed payment alone cost as much as ${Math.abs(worstPenalty)} points in a single month — more than the entire card path's utilization swing typically does across the whole two years.`;
+    html += ` A missed or partial payment alone cost as much as ${Math.abs(worstPenalty)} points in a single month — more than the entire card path's utilization swing typically does across the whole two years.`;
+  }
+  if(s.totalOverdraftFees > 0){
+    html += ` You used overdraft ${Math.round(s.totalOverdraftFees/OVERDRAFT_FEE)} time${s.totalOverdraftFees>OVERDRAFT_FEE?'s':''} to keep a payment on time — it protected your score (overdrafts aren't reported to credit bureaus), but cost ${fmt(s.totalOverdraftFees)} in bank fees and left cash tighter for the months after.`;
+  }
+  if(s.backupCardDebt > 0.5){
+    html += ` You also ended the game carrying <b>${fmt(s.backupCardDebt)}</b> on a backup card that was never modeled as being paid down — a reminder that "cover it with a different card" doesn't make a cost disappear, it just moves it somewhere higher-interest and easier to lose track of.`;
   }
   const scoreNow = displayScore(s);
   const scoreChange = scoreNow - STARTING_SCORE;
