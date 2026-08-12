@@ -196,11 +196,24 @@
   .score-consequence-val{
     font-family:'IBM Plex Mono',monospace;font-weight:600;white-space:nowrap;
   }
-  .score-consequence-next{
-    background:transparent;border-style:dashed;border-color:#c99;color:#7a4a4a;
-    font-size:11.5px;margin-top:-4px;
+
+  .ladder-wrap{margin:10px 0 4px;}
+  .ladder-row{
+    display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:6px;
   }
-  .score-consequence-next .score-consequence-val{font-weight:500;opacity:.85;}
+  .ladder-step{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    min-width:56px;padding:6px 8px;border:1.5px solid var(--stamp);border-radius:2px;
+    background:#fff;
+  }
+  .ladder-step.now{border-color:var(--line);background:var(--cream-2);}
+  .ladder-score{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;color:#5a1f1f;}
+  .ladder-step.now .ladder-score{color:var(--ink);}
+  .ladder-label{font-family:'IBM Plex Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:#8a6a6a;margin-top:1px;}
+  .ladder-step.now .ladder-label{color:#6b6350;}
+  .ladder-delta{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--stamp);margin-top:1px;}
+  .ladder-arrow{font-size:13px;color:#a88;flex-shrink:0;}
+  .ladder-note{font-size:11px;color:#7a6a5a;margin-top:6px;font-style:italic;}
 
   .ledger-scroll{max-height:340px;overflow-y:auto;border:1px solid var(--line);padding:0 4px;}
 
@@ -367,10 +380,9 @@ const PATH_META = {
 // (same life happens to you regardless of which path you picked)
 const EVENTS = {
   4:  { label: 'Car repair', amount: -250 },
-  9:  { label: 'Work bonus', amount: 100 },
-  14: { label: 'Vet bill', amount: -180 },
-  19: { label: 'Birthday gift from family', amount: 100 },
-  21: { label: 'Christmas shopping', amount: 80},
+  9:  { label: 'Work bonus', amount: 120 },
+  14: { label: 'Vet bill', amount: -150 },
+  19: { label: 'Birthday gift from family', amount: 70 },
 };
 
 let state = null;
@@ -435,7 +447,7 @@ const SAVE_DEPOSIT = SPARE_CASH;
 // most people aren't at exactly $0. This is what a missed payment actually
 // erodes: once it's gone, a payment that costs more than that month's spare
 // cash genuinely cannot be made.
-const STARTING_CASH_BUFFER = 75;
+const STARTING_CASH_BUFFER = 80;
 const LATE_FEE = 35;      // flat late fee charged to the balance on a missed/partial payment
 const OVERDRAFT_FEE = 35; // flat bank fee for overdrafting to cover a payment in full
 
@@ -910,25 +922,29 @@ function ordinalOf(n){
 }
 
 // Preview what a missed/partial payment would do to the score, without
-// mutating any state. The result is deliberately independent of the amount
-// paid — that's the point being shown to the player. Also forecasts one step
-// further: what a second consecutive miss, next month, would do on top of it.
+// mutating any state. The immediate result (ladder[0]) is deliberately
+// independent of the amount paid — that's the point being shown to the
+// player. The rest of the ladder forecasts what continuing to miss, one
+// month after another, would do — showing the penalty shrink per step
+// (real scoring: 30/60/90-day-late tiers) without ever hitting zero.
+const SCORE_LADDER_STEPS = 3;
+
 function previewMissedPenalty(){
   const before = displayScore(state);
-  const streakAfter = state.scoreFactors.missedStreak + 1;
-  const penalty = missedPaymentPenalty(streakAfter);
-  const afterExact = clampScore(state.creditScoreExact + penalty);
-  const after = Math.round(afterExact);
-  const band = scoreBand(after);
-  const ordinal = ordinalOf(streakAfter);
-
-  const nextStreak = streakAfter + 1;
-  const nextPenalty = missedPaymentPenalty(nextStreak);
-  const nextAfter = Math.round(clampScore(afterExact + nextPenalty));
-  const nextBand = scoreBand(nextAfter);
-  const nextOrdinal = ordinalOf(nextStreak);
-
-  return { before, after, band, ordinal, penalty: after - before, nextAfter, nextBand, nextOrdinal, nextPenalty: nextAfter - after };
+  const startStreak = state.scoreFactors.missedStreak + 1;
+  const ladder = [];
+  let runningExact = state.creditScoreExact;
+  let prevScore = before;
+  for(let i = 0; i < SCORE_LADDER_STEPS; i++){
+    const streak = startStreak + i;
+    const penalty = missedPaymentPenalty(streak);
+    runningExact = clampScore(runningExact + penalty);
+    const score = Math.round(runningExact);
+    ladder.push({ streak, ordinal: ordinalOf(streak), score, band: scoreBand(score), stepPenalty: score - prevScore });
+    prevScore = score;
+  }
+  const first = ladder[0];
+  return { before, ladder, after: first.score, band: first.band, ordinal: first.ordinal, penalty: first.stepPenalty };
 }
 
 function promptShortfall(due, available){
@@ -977,9 +993,22 @@ function renderPartialSlider(due, available){
         <span>Score after confirming, regardless of amount paid:</span>
         <span class="score-consequence-val">${preview.before} → ${preview.after} <span class="score-pill" style="background:${preview.band.color};">${preview.band.label}</span></span>
       </div>
-      <div class="score-consequence score-consequence-next">
-        <span>If a payment gets missed again next month (${preview.nextOrdinal} in a row):</span>
-        <span class="score-consequence-val">~${preview.after} → ~${preview.nextAfter} <span class="score-pill" style="background:${preview.nextBand.color};">${preview.nextBand.label}</span></span>
+      <div class="ladder-wrap">
+        <div class="eyebrow">If it keeps happening, one miss per month:</div>
+        <div class="ladder-row">
+          <div class="ladder-step now">
+            <span class="ladder-score">${preview.before}</span>
+            <span class="ladder-label">now</span>
+          </div>
+          ${preview.ladder.map(step => `
+          <span class="ladder-arrow">→</span>
+          <div class="ladder-step">
+            <span class="ladder-score">${step.score}</span>
+            <span class="ladder-label">${step.ordinal}</span>
+            <span class="ladder-delta">${step.stepPenalty} pts</span>
+          </div>`).join('')}
+        </div>
+        <div class="ladder-note">Each additional miss hurts less than the last — but it never stops hurting.</div>
       </div>
       <div style="margin:16px 0 10px;">
         <input type="range" id="partial-slider" min="0" max="${available.toFixed(2)}" step="1" value="${initial}">
