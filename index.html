@@ -318,7 +318,7 @@
       <div class="eyebrow">The Scenario <span id="scenario-recap"></span> <a href="#" id="scenario-change-link" style="font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:none;letter-spacing:0;">← change</a></div>
       <h2 id="scenario-headline">You need a $1,200 laptop.</h2>
       <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, a small <b>$150 cushion</b> already sitting in checking, and about <b id="spare-cash-mention">$60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in dollars <i>and</i> in credit score.</p>
-      <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b>$3,000</b>. If a payment ever costs more than your cushion plus that month's spare cash, you'll have to decide how to cover it — <b>pay what you can, overdraft your account, or charge it to a backup card</b>. Each costs you differently.</p>
+      <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b id="card-limit-mention">$3,000</b>. If a payment ever costs more than your cushion plus that month's spare cash, you'll have to decide how to cover it — <b>pay what you can, overdraft your account, or charge it to a backup card</b>. Each costs you differently.</p>
       <p id="scenario-shock-note" style="line-height:1.6;font-size:15px;display:none;background:#e8e0f5;border-left:3px solid #5b3a8a;padding:8px 12px;">⚠ This run includes a <b>job-loss shock</b>: for 2 months partway through, your spare cash drops to $0 — no matter which path you're on.</p>
     </div>
 
@@ -546,6 +546,14 @@ function applyScenario(){
   CARD_MONTHLY_RATE = CARD_APR / 12;
   LOAN_PAYMENT = LAPTOP_PRICE * LOAN_MONTHLY_RATE / (1 - Math.pow(1+LOAN_MONTHLY_RATE, -MONTHS));
   JOB_LOSS_ENABLED = scenarioChoice.shock === 'on';
+
+  // Both scale with laptop price so the "shape" of the card story stays
+  // comparable across tiers: a $2,000 laptop gets a bigger limit (so
+  // starting utilization is ~the same 40% across tiers) and a bigger
+  // "pay more than the minimum" amount (so it stays proportionally
+  // aggressive, not a shrinking rounding error against a larger balance).
+  CARD_LIMIT = Math.round(LAPTOP_PRICE * 2.5 / 100) * 100;
+  FIXED_CARD_PAYMENT = Math.round(70 * LAPTOP_PRICE / 1200 / 5) * 5;
 }
 
 // --- Cash-flow realism ---
@@ -562,7 +570,8 @@ const OVERDRAFT_FEE = 35; // flat bank fee for overdrafting to cover a payment i
 // impact, and length-of-history dampening. Not a real scoring formula — built to
 // teach the *direction and relative size* of each factor's effect.
 const STARTING_SCORE = 700;         // all three paths start identically
-const CARD_LIMIT = 3000;            // assumed credit limit on the card
+let CARD_LIMIT = 3000;              // assumed credit limit on the card, set by applyScenario() — scales with laptop price so starting utilization is comparable across tiers
+let FIXED_CARD_PAYMENT = 70;        // the "pay more than the minimum" amount, set by applyScenario() — scales with laptop price so it stays proportionally aggressive
 const NEW_ACCOUNT_MONTHS = 6;       // "thin file" window: upward moves are dampened early on
 
 function clampScore(v){ return Math.max(300, Math.min(850, v)); }
@@ -653,7 +662,7 @@ function updateCreditScoreForMonth(s){
 
   if(s.path === 'card'){
     // Utilization is the other big lever on a revolving account: how much of
-    // the $3,000 limit the balance eats up, month over month. This is what
+    // the card's limit the balance eats up, month over month. This is what
     // actually differs between "pay the minimum" and "pay more than the
     // minimum" — right up until cash can't cover the payment at all.
     f.paymentTotalMonths++;
@@ -812,7 +821,7 @@ function beginMonthCard(choiceOverride){
   addRow({month:state.month, label:'Interest charged', amount: interest, balance: state.debt});
 
   const choice = choiceOverride || state.cardMonthlyChoice;
-  let due = choice === 'min' ? Math.max(25, state.debt * 0.03) : 70;
+  let due = choice === 'min' ? Math.max(25, state.debt * 0.03) : FIXED_CARD_PAYMENT;
   due = Math.min(due, state.debt);
   const available = state.cash + spareCashForMonth(state.month);
   return { due, available, choice };
@@ -824,7 +833,7 @@ function beginMonthCard(choiceOverride){
 
 function resolveDebtPayment(resolution, due, available, partialAmount){
   const s = state;
-  const label = s.path === 'loan' ? 'Loan payment' : (s.cardMonthlyChoice === 'min' ? 'Minimum payment' : 'Fixed payment ($70)');
+  const label = s.path === 'loan' ? 'Loan payment' : (s.cardMonthlyChoice === 'min' ? 'Minimum payment' : `Fixed payment (${fmt(FIXED_CARD_PAYMENT)})`);
   let interestPortion = 0, principalPortion = due;
   if(s.path === 'loan' && due > 0){
     interestPortion = s.debt * LOAN_MONTHLY_RATE;
@@ -1018,6 +1027,7 @@ function applyScenarioTextToPickScreen(){
     `— ${price.label} · ${rate.label}${shockOn ? ' · job-loss shock' : ''}`;
   document.getElementById('scenario-shock-note').style.display = shockOn ? 'block' : 'none';
   document.getElementById('spare-cash-mention').textContent = `${fmt(SPARE_CASH)}/month of spare cash`;
+  document.getElementById('card-limit-mention').textContent = fmt(CARD_LIMIT);
 
   document.getElementById('save-blurb').textContent =
     `Set the ${fmt(SPARE_CASH)}/month aside in a savings account. Buy the laptop once you've saved ${fmt(LAPTOP_PRICE)}. You wait — but you earn interest, and you owe no one.`;
@@ -1089,7 +1099,7 @@ function showPromptIfNeeded(){
         <p>Your card balance is <b>${fmt(state.debt)}</b>. How do you pay it this month?</p>
         <div class="btn-row">
           <button class="btn ghost" id="choice-min">Pay the minimum only</button>
-          <button class="btn" id="choice-fixed">Pay a fixed $70</button>
+          <button class="btn" id="choice-fixed">Pay a fixed ${fmt(FIXED_CARD_PAYMENT)}</button>
         </div>
       </div>`;
     document.getElementById('choice-min').onclick = ()=>{ state.cardMonthlyChoice='min'; uiLocked=false; advanceMonth(false); };
