@@ -108,6 +108,17 @@
   .chip .chip-blurb{font-size:12px;color:#4b4636;margin-top:5px;line-height:1.4;}
   .chip.selected .chip-label::before{content:"✓";color:var(--save);}
 
+  .chip-row.shuffling{pointer-events:none;}
+  .chip-row.shuffling .chip{transition:none;}
+  .chip-row.shuffling .chip.selected{
+    border-color:var(--save);
+    animation:chip-pulse .18s ease-out;
+  }
+  @keyframes chip-pulse{
+    0%{transform:scale(.97);opacity:.6;}
+    100%{transform:scale(1);opacity:1;}
+  }
+
   .btn{
     font-family:'IBM Plex Mono',monospace;
     font-size:13px;
@@ -1071,8 +1082,52 @@ function randomizeScenario(){
     candidate.rate === before.rate &&
     candidate.shock === before.shock
   );
-  scenarioChoice = candidate;
-  renderScenarioScreen();
+  animateScenarioShuffle(candidate);
+}
+
+// Cycles through a few quick, purely-visual random picks before settling on
+// the already-decided final candidate — the weighting/corner-avoidance logic
+// has already run by this point, this is just motion, not another roll.
+// Frames slow down toward the end (like a wheel of fortune) so it reads as
+// "settling" rather than just flickering at a constant rate.
+const SHUFFLE_FRAMES = 9;
+const SHUFFLE_BASE_DELAY = 45;
+const SHUFFLE_DELAY_GROWTH = 9;
+
+function animateScenarioShuffle(finalCandidate){
+  const btn = document.getElementById('btn-scenario-random');
+  const continueBtn = document.getElementById('btn-scenario-continue');
+  btn.disabled = true;
+  continueBtn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = '🎲 Rolling…';
+  document.querySelectorAll('.chip-row').forEach(el => el.classList.add('shuffling'));
+
+  let frame = 0;
+  function step(){
+    if(frame < SHUFFLE_FRAMES){
+      scenarioChoice = {
+        price: randomPickUniform(PRICE_OPTIONS),
+        rate: randomPickUniform(RATE_OPTIONS),
+        shock: randomPickUniform(SHOCK_OPTIONS),
+      };
+      renderScenarioScreen();
+      frame++;
+      setTimeout(step, SHUFFLE_BASE_DELAY + frame * SHUFFLE_DELAY_GROWTH);
+    } else {
+      scenarioChoice = finalCandidate;
+      renderScenarioScreen();
+      document.querySelectorAll('.chip-row').forEach(el => el.classList.remove('shuffling'));
+      btn.textContent = originalLabel;
+      btn.disabled = false;
+      continueBtn.disabled = false;
+    }
+  }
+  step();
+}
+
+function randomPickUniform(options){
+  return options[Math.floor(Math.random() * options.length)].id;
 }
 
 document.getElementById('btn-scenario-random').addEventListener('click', randomizeScenario);
