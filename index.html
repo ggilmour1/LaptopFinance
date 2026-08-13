@@ -308,6 +308,7 @@
     </div>
 
     <div class="btn-row" style="justify-content:center;margin-top:6px;">
+      <button class="btn ghost" id="btn-scenario-random">🎲 Random scenario</button>
       <button class="btn" id="btn-scenario-continue">Continue to path selection →</button>
     </div>
   </div>
@@ -1016,6 +1017,31 @@ function renderScenarioScreen(){
   renderChips('chips-shock', SHOCK_OPTIONS, 'shock');
 }
 renderScenarioScreen();
+
+function randomPick(options){
+  return options[Math.floor(Math.random() * options.length)].id;
+}
+
+function randomizeScenario(){
+  // Re-roll each dimension independently until at least one actually changes,
+  // so clicking Random always visibly does something even with only 3x3x2
+  // combinations to draw from.
+  const before = { ...scenarioChoice };
+  do {
+    scenarioChoice = {
+      price: randomPick(PRICE_OPTIONS),
+      rate: randomPick(RATE_OPTIONS),
+      shock: randomPick(SHOCK_OPTIONS),
+    };
+  } while (
+    scenarioChoice.price === before.price &&
+    scenarioChoice.rate === before.rate &&
+    scenarioChoice.shock === before.shock
+  );
+  renderScenarioScreen();
+}
+
+document.getElementById('btn-scenario-random').addEventListener('click', randomizeScenario);
 
 function applyScenarioTextToPickScreen(){
   const price = PRICE_OPTIONS.find(o => o.id === scenarioChoice.price);
