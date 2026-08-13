@@ -1018,26 +1018,60 @@ function renderScenarioScreen(){
 }
 renderScenarioScreen();
 
-function randomPick(options){
-  return options[Math.floor(Math.random() * options.length)].id;
+// Weighted toward the easier/middle end of each dimension, so a run of
+// "Random" clicks doesn't keep landing on the harshest possible setup. The
+// hardest single options (Premium, Tough, shock on) stay reachable — a
+// quarter-to-a-third of rolls on their own dimension — they're just no
+// longer as likely to all show up in the same run as an easy pick would be.
+const PRICE_WEIGHTS = { budget: 0.35, standard: 0.40, premium: 0.25 };
+const RATE_WEIGHTS  = { favorable: 0.35, standard: 0.40, tough: 0.25 };
+const SHOCK_WEIGHTS = { off: 0.70, on: 0.30 };
+
+function weightedPick(options, weights){
+  const total = options.reduce((sum, o) => sum + (weights[o.id] ?? 1), 0);
+  let r = Math.random() * total;
+  for (const o of options) {
+    r -= (weights[o.id] ?? 1);
+    if (r <= 0) return o.id;
+  }
+  return options[options.length - 1].id; // float-rounding fallback
+}
+
+function rollScenarioCandidate(){
+  let candidate, attempts = 0;
+  do {
+    candidate = {
+      price: weightedPick(PRICE_OPTIONS, PRICE_WEIGHTS),
+      rate: weightedPick(RATE_OPTIONS, RATE_WEIGHTS),
+      shock: weightedPick(SHOCK_OPTIONS, SHOCK_WEIGHTS),
+    };
+    attempts++;
+    // The three per-dimension weights already make this corner rarer on
+    // their own (~1.9% vs. a uniform 5.6%) — this adds a further 70% chance
+    // to reroll away from it specifically, since it's the one combination
+    // most likely to read as "unlucky" rather than "an interesting run."
+    const isHardestCorner = candidate.price === 'premium' && candidate.rate === 'tough' && candidate.shock === 'on';
+    if (isHardestCorner && Math.random() < 0.7 && attempts < 25) continue;
+    break;
+  } while (true);
+  return candidate;
 }
 
 function randomizeScenario(){
-  // Re-roll each dimension independently until at least one actually changes,
-  // so clicking Random always visibly does something even with only 3x3x2
-  // combinations to draw from.
+  // Re-roll until the result actually differs from the current selection,
+  // so clicking Random always visibly does something.
   const before = { ...scenarioChoice };
+  let candidate, guard = 0;
   do {
-    scenarioChoice = {
-      price: randomPick(PRICE_OPTIONS),
-      rate: randomPick(RATE_OPTIONS),
-      shock: randomPick(SHOCK_OPTIONS),
-    };
+    candidate = rollScenarioCandidate();
+    guard++;
   } while (
-    scenarioChoice.price === before.price &&
-    scenarioChoice.rate === before.rate &&
-    scenarioChoice.shock === before.shock
+    guard < 25 &&
+    candidate.price === before.price &&
+    candidate.rate === before.rate &&
+    candidate.shock === before.shock
   );
+  scenarioChoice = candidate;
   renderScenarioScreen();
 }
 
