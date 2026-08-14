@@ -422,6 +422,7 @@
     <div class="btn-row" style="justify-content:center;">
       <button class="btn" id="btn-restart">Try a different path</button>
       <button class="btn ghost" id="btn-change-scenario">Change scenario</button>
+      <button class="btn ghost" id="btn-copy-results">📋 Copy results summary</button>
     </div>
   </div>
 
@@ -1463,23 +1464,75 @@ document.getElementById('btn-change-scenario').addEventListener('click', ()=>{
   document.getElementById('screen-scenario').classList.remove('hidden');
 });
 
-function renderSummaryScenarioRecap(){
+// A plain-text export built from the SAME results object the on-screen
+// comparison renders from (see finishGame/lastGameResults) — this is the
+// concrete case a future "download" or "screenshot" feature would follow:
+// pull structured data out of results.scenario and results[path], don't
+// re-derive it from scenarioChoice or scrape it back out of the DOM.
+function buildResultsSummaryText(results){
+  const lines = [];
+  lines.push('THE LEDGER — Results Summary');
+  lines.push(`Scenario: ${results.scenario.recapText}`);
+  lines.push(`Path played: ${PATH_META[results.chosenPath].name}`);
+  lines.push('');
+  ['save','loan','card'].forEach(p => {
+    const s = results[p];
+    const nw = netWorth(s);
+    const score = displayScore(s);
+    const totalPaid = p==='save'
+      ? LAPTOP_PRICE - s.totalInterestEarned
+      : results.scenario.laptopPrice + s.totalInterestPaid + s.totalLateFees + (s.totalOverdraftFees||0);
+    lines.push(`${PATH_META[p].name}${p===results.chosenPath ? ' (your path)' : ''}:`);
+    lines.push(`  Total paid: ${fmt(totalPaid)}`);
+    lines.push(`  Net worth, month 24: ${fmt(nw)}`);
+    lines.push(`  Credit score, month 24: ${score}`);
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+document.getElementById('btn-copy-results').addEventListener('click', ()=>{
+  if(!lastGameResults) return;
+  const text = buildResultsSummaryText(lastGameResults);
+  const btn = document.getElementById('btn-copy-results');
+  const originalLabel = btn.textContent;
+  const showCopied = () => { btn.textContent = '✓ Copied'; setTimeout(()=>{ btn.textContent = originalLabel; }, 1500); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(showCopied).catch(()=>{ btn.textContent = originalLabel; });
+  } else {
+    showCopied(); // clipboard API unavailable — text is still built correctly, just not auto-copied
+  }
+});
+
+// Pure, DOM-independent snapshot of "what conditions produced this run" —
+// deliberately structured data rather than a rendered string, so any future
+// export/download/screenshot feature can consume the fields it needs
+// directly instead of re-deriving them from scenarioChoice or scraping text
+// out of the page.
+function getScenarioRecapData(){
   const price = PRICE_OPTIONS.find(o => o.id === scenarioChoice.price);
   const rate = RATE_OPTIONS.find(o => o.id === scenarioChoice.rate);
   const shockOn = scenarioChoice.shock === 'on';
-  const parts = [
-    `${price.label} (${fmt(LAPTOP_PRICE)})`,
-    `${rate.label} (${(LOAN_APR*100).toFixed(1)}%/${(CARD_APR*100).toFixed(1)}% APR)`,
-    shockOn ? 'job-loss shock ON' : 'steady income',
-  ];
-  document.getElementById('summary-scenario-recap').textContent = `This run: ${parts.join(' · ')}`;
+  const recapText =
+    `${price.label} (${fmt(LAPTOP_PRICE)}) · ${rate.label} (${(LOAN_APR*100).toFixed(1)}%/${(CARD_APR*100).toFixed(1)}% APR) · ${shockOn ? 'job-loss shock ON' : 'steady income'}`;
+  return {
+    priceId: scenarioChoice.price, priceLabel: price.label, laptopPrice: LAPTOP_PRICE, spareCash: SPARE_CASH,
+    rateId: scenarioChoice.rate, rateLabel: rate.label, loanAPR: LOAN_APR, cardAPR: CARD_APR,
+    cardLimit: CARD_LIMIT, fixedCardPayment: FIXED_CARD_PAYMENT,
+    jobLossEnabled: shockOn,
+    recapText,
+  };
 }
+
+function renderSummaryScenarioRecap(scenario){
+  document.getElementById('summary-scenario-recap').textContent = `This run: ${scenario.recapText}`;
+}
+
+let lastGameResults = null; // holds the most recently finished run's full results + scenario, for export/copy
 
 function finishGame(){
   document.getElementById('screen-ledger').classList.add('hidden');
   document.getElementById('screen-summary').classList.remove('hidden');
-
-  renderSummaryScenarioRecap();
 
   const results = {
     save: runFullSim('save'),
@@ -1488,7 +1541,12 @@ function finishGame(){
   };
   // replace the chosen path's silent sim with the actual played-through state for accuracy
   results[state.path] = state;
+  results.chosenPath = state.path;
+  results.scenario = getScenarioRecapData(); // travels with the comparison data, not just shown once in the DOM
 
+  lastGameResults = results;
+
+  renderSummaryScenarioRecap(results.scenario);
   drawChart(results);
   drawScoreChart(results);
   renderCompare(results);
