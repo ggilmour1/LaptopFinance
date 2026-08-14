@@ -423,6 +423,7 @@
       <button class="btn" id="btn-restart">Try a different path</button>
       <button class="btn ghost" id="btn-change-scenario">Change scenario</button>
       <button class="btn ghost" id="btn-copy-results">📋 Copy results summary</button>
+      <button class="btn ghost" id="btn-download-json">⬇ Download JSON</button>
     </div>
   </div>
 
@@ -1464,6 +1465,36 @@ document.getElementById('btn-change-scenario').addEventListener('click', ()=>{
   document.getElementById('screen-scenario').classList.remove('hidden');
 });
 
+// Structured per-path summary — the single source of truth both the
+// plain-text export and the JSON export pull from, so they can't drift out
+// of sync with each other (or with what renderCompare shows on screen).
+function buildPathSummary(p, results){
+  const s = results[p];
+  const nw = netWorth(s);
+  const totalPaid = p === 'save'
+    ? results.scenario.laptopPrice - s.totalInterestEarned
+    : results.scenario.laptopPrice + s.totalInterestPaid + s.totalLateFees + (s.totalOverdraftFees||0);
+  return {
+    pathId: p,
+    pathName: PATH_META[p].name,
+    isChosenPath: p === results.chosenPath,
+    totalPaid: Math.round(totalPaid * 100) / 100,
+    interestPaid: p === 'save' ? 0 : Math.round(s.totalInterestPaid * 100) / 100,
+    interestEarned: p === 'save' ? Math.round(s.totalInterestEarned * 100) / 100 : 0,
+    lateFees: Math.round((s.totalLateFees||0) * 100) / 100,
+    overdraftFees: Math.round((s.totalOverdraftFees||0) * 100) / 100,
+    debtRemaining: Math.round(s.debt * 100) / 100,
+    backupCardDebt: Math.round((s.backupCardDebt||0) * 100) / 100,
+    cashPlusSavings: Math.round((s.cash + s.savings) * 100) / 100,
+    netWorth: Math.round(nw * 100) / 100,
+    creditScore: displayScore(s),
+    creditScoreChange: displayScore(s) - STARTING_SCORE,
+    missedOrPartialPayments: s.scoreFactors.missedPayments,
+    laptopOwned: s.laptopOwned,
+    cardStrategy: p === 'card' ? s.cardMonthlyChoice : undefined,
+  };
+}
+
 // A plain-text export built from the SAME results object the on-screen
 // comparison renders from (see finishGame/lastGameResults) — this is the
 // concrete case a future "download" or "screenshot" feature would follow:
@@ -1476,19 +1507,46 @@ function buildResultsSummaryText(results){
   lines.push(`Path played: ${PATH_META[results.chosenPath].name}`);
   lines.push('');
   ['save','loan','card'].forEach(p => {
-    const s = results[p];
-    const nw = netWorth(s);
-    const score = displayScore(s);
-    const totalPaid = p==='save'
-      ? LAPTOP_PRICE - s.totalInterestEarned
-      : results.scenario.laptopPrice + s.totalInterestPaid + s.totalLateFees + (s.totalOverdraftFees||0);
-    lines.push(`${PATH_META[p].name}${p===results.chosenPath ? ' (your path)' : ''}:`);
-    lines.push(`  Total paid: ${fmt(totalPaid)}`);
-    lines.push(`  Net worth, month 24: ${fmt(nw)}`);
-    lines.push(`  Credit score, month 24: ${score}`);
+    const summary = buildPathSummary(p, results);
+    lines.push(`${summary.pathName}${summary.isChosenPath ? ' (your path)' : ''}:`);
+    lines.push(`  Total paid: ${fmt(summary.totalPaid)}`);
+    lines.push(`  Net worth, month 24: ${fmt(summary.netWorth)}`);
+    lines.push(`  Credit score, month 24: ${summary.creditScore}`);
     lines.push('');
   });
   return lines.join('\n');
+}
+
+// A structured export meant for re-import — a future "load a past run" or
+// "compare two runs" feature can read scenario + paths directly without
+// re-deriving anything or parsing the plain-text report above.
+function buildResultsJSON(results){
+  return {
+    format: 'the-ledger-results',
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    scenario: results.scenario,
+    chosenPath: results.chosenPath,
+    paths: {
+      save: buildPathSummary('save', results),
+      loan: buildPathSummary('loan', results),
+      card: buildPathSummary('card', results),
+    },
+  };
+}
+
+function triggerJsonDownload(dataObject, filename){
+  const json = JSON.stringify(dataObject, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  return json;
 }
 
 document.getElementById('btn-copy-results').addEventListener('click', ()=>{
@@ -1502,6 +1560,21 @@ document.getElementById('btn-copy-results').addEventListener('click', ()=>{
   } else {
     showCopied(); // clipboard API unavailable — text is still built correctly, just not auto-copied
   }
+});
+
+document.getElementById('btn-download-json').addEventListener('click', ()=>{
+  if(!lastGameResults) return;
+  const btn = document.getElementById('btn-download-json');
+  const originalLabel = btn.textContent;
+  const stamp = new Date().toISOString().slice(0,16).replace(/[:T]/g,'-');
+  const filename = `the-ledger-${lastGameResults.scenario.priceId}-${lastGameResults.scenario.rateId}-${stamp}.json`;
+  try {
+    triggerJsonDownload(buildResultsJSON(lastGameResults), filename);
+    btn.textContent = '✓ Downloaded';
+  } catch(e) {
+    btn.textContent = '✗ Download failed';
+  }
+  setTimeout(()=>{ btn.textContent = originalLabel; }, 1500);
 });
 
 // Pure, DOM-independent snapshot of "what conditions produced this run" —
