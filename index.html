@@ -389,6 +389,7 @@
   <div id="screen-summary" class="hidden">
     <div class="card">
       <div class="eyebrow">Month 24 — Results</div>
+      <div class="eyebrow" id="summary-scenario-recap" style="color:#6b6350;margin-bottom:2px;"></div>
       <h2 id="summary-headline">Here's what your laptop really cost.</h2>
       <canvas id="chart" width="800" height="220"></canvas>
       <div style="display:flex;gap:16px;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:6px;">
@@ -1462,9 +1463,23 @@ document.getElementById('btn-change-scenario').addEventListener('click', ()=>{
   document.getElementById('screen-scenario').classList.remove('hidden');
 });
 
+function renderSummaryScenarioRecap(){
+  const price = PRICE_OPTIONS.find(o => o.id === scenarioChoice.price);
+  const rate = RATE_OPTIONS.find(o => o.id === scenarioChoice.rate);
+  const shockOn = scenarioChoice.shock === 'on';
+  const parts = [
+    `${price.label} (${fmt(LAPTOP_PRICE)})`,
+    `${rate.label} (${(LOAN_APR*100).toFixed(1)}%/${(CARD_APR*100).toFixed(1)}% APR)`,
+    shockOn ? 'job-loss shock ON' : 'steady income',
+  ];
+  document.getElementById('summary-scenario-recap').textContent = `This run: ${parts.join(' · ')}`;
+}
+
 function finishGame(){
   document.getElementById('screen-ledger').classList.add('hidden');
   document.getElementById('screen-summary').classList.remove('hidden');
+
+  renderSummaryScenarioRecap();
 
   const results = {
     save: runFullSim('save'),
