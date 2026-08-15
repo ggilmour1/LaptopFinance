@@ -391,6 +391,7 @@
 
   <!-- SCREEN 2: LEDGER SIMULATION -->
   <div id="screen-ledger" class="hidden">
+    <div class="eyebrow" id="ledger-scenario-recap" style="color:#6b6350;margin-bottom:8px;"></div>
     <div class="statusbar">
       <div class="stat"><div class="eyebrow">Month</div><div class="val" id="stat-month">0 / 24</div></div>
       <div class="stat"><div class="eyebrow">Cash on hand</div><div class="val" id="stat-cash">$0</div></div>
@@ -1236,6 +1237,7 @@ function startGame(path){
   document.getElementById('screen-summary').classList.add('hidden');
   document.getElementById('screen-ledger').classList.remove('hidden');
   document.getElementById('ledger-body').innerHTML = '';
+  document.getElementById('ledger-scenario-recap').textContent = `Playing: ${getScenarioRecapData().recapText}`;
   document.getElementById('path-badge').textContent = PATH_META[path].name;
   document.getElementById('ledger-title').textContent =
     path==='save' ? 'Savings Passbook' : path==='loan' ? 'Loan Statement' : 'Credit Card Statement';
