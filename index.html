@@ -119,6 +119,32 @@
     100%{transform:scale(1);opacity:1;}
   }
 
+  /* Load-a-run drop zone */
+  .dropzone{
+    border:2px dashed var(--line);background:var(--cream-2);
+    padding:20px 16px;text-align:center;margin-top:8px;
+    transition:border-color .12s ease, background .12s ease;
+  }
+  .dropzone p{margin:0;font-size:13.5px;color:#4b4636;}
+  .dropzone code{font-family:'IBM Plex Mono',monospace;background:#fff;padding:1px 5px;border:1px solid var(--line);}
+  .dropzone .link-btn{
+    color:var(--ink);text-decoration:underline;cursor:pointer;font-weight:600;
+  }
+  .dropzone.dragover{border-color:var(--save);background:#e3ede3;}
+  .load-status{font-family:'IBM Plex Mono',monospace;font-size:12px;margin-top:8px;min-height:16px;}
+  .load-status.ok{color:var(--save);}
+  .load-status.err{color:var(--stamp);}
+
+  .loaded-run{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line);}
+  .loaded-run .eyebrow{margin-bottom:2px;}
+  .loaded-run h4{font-size:15px;margin:2px 0 10px;font-family:'Spectral',serif;font-weight:600;}
+  .loaded-run .compare{margin-top:6px;}
+  .loaded-run .col{opacity:.92;}
+  .loaded-run-clear{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a6a6a;
+    text-decoration:underline;cursor:pointer;margin-left:8px;
+  }
+
   .btn{
     font-family:'IBM Plex Mono',monospace;
     font-size:13px;
@@ -318,6 +344,16 @@
       <div class="chip-row" id="chips-shock"></div>
     </div>
 
+    <div class="card">
+      <div class="eyebrow">Comparing to a Previous Run?</div>
+      <div class="dropzone" id="dropzone-scenario">
+        <p>Drag a <code>.json</code> results file here, or <label for="file-input-scenario" class="link-btn">choose a file</label>.</p>
+        <input type="file" id="file-input-scenario" accept="application/json,.json" style="display:none;">
+      </div>
+      <div id="load-status-scenario" class="load-status"></div>
+      <div id="loaded-run-scenario" class="loaded-run hidden"></div>
+    </div>
+
     <div class="btn-row" style="justify-content:center;margin-top:6px;">
       <button class="btn ghost" id="btn-scenario-random">🎲 Random scenario</button>
       <button class="btn" id="btn-scenario-continue">Continue to path selection →</button>
@@ -400,6 +436,16 @@
     </div>
 
     <div class="compare" id="compare-cols"></div>
+
+    <div class="card" style="margin-top:20px;">
+      <div class="eyebrow">Compare Against a Previous Run</div>
+      <div class="dropzone" id="dropzone-summary">
+        <p>Drag a <code>.json</code> results file here, or <label for="file-input-summary" class="link-btn">choose a file</label>.</p>
+        <input type="file" id="file-input-summary" accept="application/json,.json" style="display:none;">
+      </div>
+      <div id="load-status-summary" class="load-status"></div>
+      <div id="loaded-run-summary" class="loaded-run hidden"></div>
+    </div>
 
     <div class="card" style="margin-top:20px;">
       <div class="eyebrow">Meanwhile, Your Credit Score</div>
@@ -1577,6 +1623,122 @@ document.getElementById('btn-download-json').addEventListener('click', ()=>{
   setTimeout(()=>{ btn.textContent = originalLabel; }, 1500);
 });
 
+/* ---------- Load a run: import a previously-exported JSON file ---------- */
+
+const SUPPORTED_RESULTS_VERSIONS = [1];
+let loadedRun = null; // the currently-loaded previous run, shown alongside a new one
+
+// Checks the file is actually one of ours before trying to render anything
+// from it. Returns {ok:true, data} or {ok:false, error}.
+function validateLoadedRunData(data){
+  if(!data || typeof data !== 'object'){
+    return { ok:false, error:'That file doesn\'t look like a results export (not a JSON object).' };
+  }
+  if(data.format !== 'the-ledger-results'){
+    return { ok:false, error:'That JSON file isn\'t a Ledger results export (missing or wrong "format" field).' };
+  }
+  if(typeof data.version !== 'number' || !SUPPORTED_RESULTS_VERSIONS.includes(data.version)){
+    return { ok:false, error:`This file is format version ${data.version ?? '(none)'} — this build only reads version ${SUPPORTED_RESULTS_VERSIONS.join(', ')}.` };
+  }
+  if(!data.scenario || !data.paths || !data.paths.save || !data.paths.loan || !data.paths.card){
+    return { ok:false, error:'That export is missing scenario or path data — it may be corrupted or incomplete.' };
+  }
+  if(!data.chosenPath || !['save','loan','card'].includes(data.chosenPath)){
+    return { ok:false, error:'That export doesn\'t say which path was played — it may be corrupted.' };
+  }
+  return { ok:true, data };
+}
+
+function setLoadStatus(suffix, message, kind){
+  const el = document.getElementById('load-status-' + suffix);
+  el.textContent = message;
+  el.className = 'load-status' + (kind ? ' ' + kind : '');
+}
+
+function handleLoadedFile(file, suffix){
+  if(!file){ return; }
+  if(file.type && file.type !== 'application/json' && !file.name.endsWith('.json')){
+    setLoadStatus(suffix, '✗ Please choose a .json file.', 'err');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(reader.result);
+    } catch(e){
+      setLoadStatus(suffix, '✗ Couldn\'t parse that file as JSON.', 'err');
+      return;
+    }
+    const result = validateLoadedRunData(parsed);
+    if(!result.ok){
+      setLoadStatus(suffix, '✗ ' + result.error, 'err');
+      return;
+    }
+    loadedRun = result.data;
+    setLoadStatus(suffix, `✓ Loaded: ${loadedRun.scenario.recapText}`, 'ok');
+    renderLoadedRunEverywhere();
+  };
+  reader.onerror = () => setLoadStatus(suffix, '✗ Couldn\'t read that file.', 'err');
+  reader.readAsText(file);
+}
+
+function renderLoadedRunEverywhere(){
+  ['scenario','summary'].forEach(suffix => renderLoadedRunInto(suffix));
+}
+
+function renderLoadedRunInto(suffix){
+  const container = document.getElementById('loaded-run-' + suffix);
+  if(!loadedRun){
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+  container.classList.remove('hidden');
+  const chosenName = PATH_META[loadedRun.chosenPath].name;
+  container.innerHTML = `
+    <div class="eyebrow">Loaded Run <span class="loaded-run-clear" id="loaded-run-clear-${suffix}">clear</span></div>
+    <h4>${loadedRun.scenario.recapText} — played ${chosenName}</h4>
+    <div class="compare" id="loaded-compare-cols-${suffix}"></div>
+  `;
+  renderCompareColumnsFromSummaries(`loaded-compare-cols-${suffix}`, loadedRun.paths, loadedRun.chosenPath);
+  document.getElementById(`loaded-run-clear-${suffix}`).addEventListener('click', () => {
+    loadedRun = null;
+    renderLoadedRunEverywhere();
+    setLoadStatus('scenario', '', '');
+    setLoadStatus('summary', '', '');
+  });
+}
+
+// Shared wiring for a drop zone + hidden file input pair. Handles both
+// click-to-choose and drag-and-drop, since drag-and-drop alone would leave
+// no way in for keyboard or touch-only users.
+function wireLoadZone(suffix){
+  const zone = document.getElementById('dropzone-' + suffix);
+  const input = document.getElementById('file-input-' + suffix);
+
+  input.addEventListener('change', () => {
+    if(input.files && input.files[0]) handleLoadedFile(input.files[0], suffix);
+  });
+
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    zone.classList.add('dragover');
+  });
+  zone.addEventListener('dragleave', () => {
+    zone.classList.remove('dragover');
+  });
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if(file) handleLoadedFile(file, suffix);
+  });
+}
+
+wireLoadZone('scenario');
+wireLoadZone('summary');
+
 // Pure, DOM-independent snapshot of "what conditions produced this run" —
 // deliberately structured data rather than a rendered string, so any future
 // export/download/screenshot feature can consume the fields it needs
@@ -1628,34 +1790,42 @@ function finishGame(){
 }
 
 function renderCompare(results){
-  const container = document.getElementById('compare-cols');
+  const summaries = {
+    save: buildPathSummary('save', results),
+    loan: buildPathSummary('loan', results),
+    card: buildPathSummary('card', results),
+  };
+  renderCompareColumnsFromSummaries('compare-cols', summaries, results.chosenPath);
+}
+
+// Renders three comparison columns from already-summarized path data — the
+// same shape buildPathSummary() produces for a live run AND the same shape
+// a loaded JSON export's `paths` object already has. This is what lets a
+// previously-downloaded run render here with zero adaptation.
+function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId){
+  const container = document.getElementById(containerId);
   container.innerHTML = '';
   ['save','loan','card'].forEach(p=>{
-    const s = results[p];
-    const nw = netWorth(s);
-    const totalPaid = p==='save' ? LAPTOP_PRICE - s.totalInterestEarned : LAPTOP_PRICE + s.totalInterestPaid + s.totalLateFees + (s.totalOverdraftFees||0);
-    const finalScore = displayScore(s);
-    const band = scoreBand(finalScore);
-    const scoreStart = STARTING_SCORE;
-    const scoreChange = finalScore - scoreStart;
-    const missCount = s.scoreFactors.missedPayments;
-    const totalDebt = s.debt + (s.backupCardDebt||0);
+    const sum = summaries[p];
+    const band = scoreBand(sum.creditScore);
+    const scoreChange = sum.creditScoreChange;
+    const totalDebt = sum.debtRemaining + (sum.backupCardDebt||0);
     const col = document.createElement('div');
-    col.className = 'col ' + p + (p===state.path ? ' chosen':'');
+    col.className = 'col ' + p + (p===chosenPathId ? ' chosen':'');
     col.innerHTML = `
-      <h4>${PATH_META[p].name}${p===state.path?' · your path':''}</h4>
-      <div class="row"><span>Total actually paid</span><span class="v">${fmt(totalPaid)}</span></div>
-      <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?s.totalInterestEarned:s.totalInterestPaid)}</span></div>
-      ${p!=='save' && s.totalLateFees>0 ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(s.totalLateFees)}</span></div>` : ''}
-      ${p!=='save' && s.totalOverdraftFees>0 ? `<div class="row"><span>Overdraft fees charged</span><span class="v">${fmt(s.totalOverdraftFees)}</span></div>` : ''}
+      <h4>${sum.pathName}${p===chosenPathId?' · played this run':''}</h4>
+      <div class="row"><span>Total actually paid</span><span class="v">${fmt(sum.totalPaid)}</span></div>
+      <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?sum.interestEarned:sum.interestPaid)}</span></div>
+      ${p!=='save' && sum.lateFees>0 ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(sum.lateFees)}</span></div>` : ''}
+      ${p!=='save' && sum.overdraftFees>0 ? `<div class="row"><span>Overdraft fees charged</span><span class="v">${fmt(sum.overdraftFees)}</span></div>` : ''}
       <div class="row"><span>Debt remaining, mo. 24</span><span class="v">${fmt(totalDebt)}</span></div>
-      ${p!=='save' && s.backupCardDebt>0.5 ? `<div class="row"><span>— of which, backup card</span><span class="v">${fmt(s.backupCardDebt)}</span></div>` : ''}
-      <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(s.cash+s.savings)}</span></div>
-      <div class="row"><span>Net worth, mo. 24</span><span class="v">${fmt(nw)}</span></div>
-      ${p!=='save' ? `<div class="row"><span>Payments missed/partial</span><span class="v" style="color:${missCount>0?'#A63D40':'inherit'};">${missCount}</span></div>` : ''}
+      ${p!=='save' && sum.backupCardDebt>0.5 ? `<div class="row"><span>— of which, backup card</span><span class="v">${fmt(sum.backupCardDebt)}</span></div>` : ''}
+      <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(sum.cashPlusSavings)}</span></div>
+      <div class="row"><span>Net worth, mo. 24</span><span class="v">${fmt(sum.netWorth)}</span></div>
+      ${p!=='save' ? `<div class="row"><span>Payments missed/partial</span><span class="v" style="color:${sum.missedOrPartialPayments>0?'#A63D40':'inherit'};">${sum.missedOrPartialPayments}</span></div>` : ''}
       <div class="row" style="border-bottom:none;font-weight:600;">
         <span>Credit score, mo. 24</span>
-        <span class="v">${finalScore} <span class="score-pill" style="background:${band.color};">${band.label}</span>
+        <span class="v">${sum.creditScore} <span class="score-pill" style="background:${band.color};">${band.label}</span>
         <span style="font-weight:400;color:${scoreChange>=0?'#2F6F4E':'#A63D40'};">${scoreChange>=0?'+':''}${scoreChange}</span></span>
       </div>
     `;
