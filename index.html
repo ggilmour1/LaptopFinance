@@ -145,6 +145,12 @@
     text-decoration:underline;cursor:pointer;margin-left:8px;
   }
 
+  .motion-toggle{font-size:11.5px;padding:8px 12px;}
+  .motion-toggle[aria-pressed="true"]{
+    background:var(--ink);color:var(--cream);border-color:var(--ink);
+  }
+  .motion-toggle[aria-pressed="true"] #reduce-motion-state{color:var(--cream);}
+
   .btn{
     font-family:'IBM Plex Mono',monospace;
     font-size:13px;
@@ -354,9 +360,10 @@
       <div id="loaded-run-scenario" class="loaded-run hidden"></div>
     </div>
 
-    <div class="btn-row" style="justify-content:center;margin-top:6px;">
+    <div class="btn-row" style="justify-content:center;margin-top:6px;align-items:center;">
       <button class="btn ghost" id="btn-scenario-random">🎲 Random scenario</button>
       <button class="btn" id="btn-scenario-continue">Continue to path selection →</button>
+      <button class="btn ghost motion-toggle" id="btn-reduce-motion" type="button" aria-pressed="false">Reduce motion: <span id="reduce-motion-state">Off</span></button>
     </div>
   </div>
 
@@ -1145,6 +1152,14 @@ const SHUFFLE_BASE_DELAY = 45;
 const SHUFFLE_DELAY_GROWTH = 9;
 
 function animateScenarioShuffle(finalCandidate){
+  if(isReduceMotionActive()){
+    // Skip straight to the result — no frames, no disabled buttons, nothing
+    // to sit through. This is the whole point of the setting.
+    scenarioChoice = finalCandidate;
+    renderScenarioScreen();
+    return;
+  }
+
   const btn = document.getElementById('btn-scenario-random');
   const continueBtn = document.getElementById('btn-scenario-continue');
   btn.disabled = true;
@@ -1179,6 +1194,41 @@ function animateScenarioShuffle(finalCandidate){
 function randomPickUniform(options){
   return options[Math.floor(Math.random() * options.length)].id;
 }
+
+/* ---------- reduced motion: respect the OS setting, allow a manual override ---------- */
+
+let reduceMotionActive = false;
+let motionPreferenceSetByUser = false; // once the player touches the toggle, stop following OS changes
+
+function isReduceMotionActive(){ return reduceMotionActive; }
+
+function prefersReducedMotionFromOS(){
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function setReduceMotionUI(active){
+  reduceMotionActive = active;
+  const btn = document.getElementById('btn-reduce-motion');
+  btn.setAttribute('aria-pressed', String(active));
+  document.getElementById('reduce-motion-state').textContent = active ? 'On' : 'Off';
+}
+
+function initReduceMotionToggle(){
+  setReduceMotionUI(prefersReducedMotionFromOS());
+  document.getElementById('btn-reduce-motion').addEventListener('click', () => {
+    motionPreferenceSetByUser = true;
+    setReduceMotionUI(!reduceMotionActive);
+  });
+  // If the OS-level setting changes mid-session (and the player hasn't
+  // manually overridden it), follow along rather than leaving it stale.
+  if(typeof window.matchMedia === 'function'){
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = (e) => { if(!motionPreferenceSetByUser) setReduceMotionUI(e.matches); };
+    if(mq.addEventListener) mq.addEventListener('change', onChange);
+    else if(mq.addListener) mq.addListener(onChange); // older Safari
+  }
+}
+initReduceMotionToggle();
 
 document.getElementById('btn-scenario-random').addEventListener('click', randomizeScenario);
 
