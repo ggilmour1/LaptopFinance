@@ -94,23 +94,28 @@
     border-left:3px solid var(--ink);
   }
 
-  /* Scenario chip picker */
-  .chip-row{display:grid;grid-template-columns:1fr;gap:10px;margin-top:8px;}
-  @media(min-width:640px){.chip-row{grid-template-columns:repeat(3,1fr);}}
-  .chip{
-    border:1.5px solid var(--line);background:#fff;padding:12px 14px;cursor:pointer;
-    transition:transform .1s ease, box-shadow .1s ease, border-color .1s ease;
+  /* Scenario option slider */
+  .option-slider{margin-top:10px;}
+  .option-range{margin-bottom:6px;}
+  .option-ticks{
+    display:flex;justify-content:space-between;
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b6350;
+    margin-bottom:10px;
   }
-  .chip:hover{transform:translateY(-2px);box-shadow:0 6px 14px rgba(27,42,74,.1);}
-  .chip.selected{border-color:var(--ink);border-width:2px;background:var(--cream-2);}
-  .chip .chip-label{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;}
-  .chip .chip-detail{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b6350;margin-top:2px;}
-  .chip .chip-blurb{font-size:12px;color:#4b4636;margin-top:5px;line-height:1.4;}
-  .chip.selected .chip-label::before{content:"✓";color:var(--save);}
+  .option-tick{flex:1;text-align:center;}
+  .option-tick:first-child{text-align:left;}
+  .option-tick:last-child{text-align:right;}
+  .option-tick.active{color:var(--ink);font-weight:600;}
+  .option-readout{
+    border:1.5px solid var(--line);background:#fff;padding:12px 14px;
+    transition:border-color .1s ease;
+  }
+  .option-readout .chip-label{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;}
+  .option-readout .chip-detail{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b6350;margin-top:2px;}
+  .option-readout .chip-blurb{font-size:12px;color:#4b4636;margin-top:5px;line-height:1.4;}
 
-  .chip-row.shuffling{pointer-events:none;}
-  .chip-row.shuffling .chip{transition:none;}
-  .chip-row.shuffling .chip.selected{
+  .option-slider.shuffling{pointer-events:none;}
+  .option-slider.shuffling .option-readout{
     border-color:var(--save);
     animation:chip-pulse .18s ease-out;
   }
@@ -119,7 +124,7 @@
     100%{transform:scale(1);opacity:1;}
   }
   @media(prefers-reduced-motion:reduce){
-    .chip-row.shuffling .chip.selected{animation:none;}
+    .option-slider.shuffling .option-readout{animation:none;}
   }
 
   /* Load-a-run drop zone */
@@ -342,15 +347,15 @@
 
     <div class="card">
       <div class="eyebrow">Laptop price</div>
-      <div class="chip-row" id="chips-price"></div>
+      <div class="option-slider" id="chips-price"></div>
     </div>
     <div class="card">
       <div class="eyebrow">Interest-rate environment</div>
-      <div class="chip-row" id="chips-rate"></div>
+      <div class="option-slider" id="chips-rate"></div>
     </div>
     <div class="card">
       <div class="eyebrow">Income stability</div>
-      <div class="chip-row" id="chips-shock"></div>
+      <div class="option-slider" id="chips-shock"></div>
     </div>
 
     <div class="card">
@@ -1061,31 +1066,53 @@ function runFullSim(path, cardChoice){
 
 /* ---------- scenario / difficulty selection ---------- */
 
-function renderChips(containerId, options, groupKey){
+function optionDetail(opt){
+  if(opt.price !== undefined) return `$${opt.price.toLocaleString()} · $${opt.spareCash}/mo budget`;
+  if(opt.loanAPR !== undefined) return `Loan ${(opt.loanAPR*100).toFixed(1)}% · Card ${(opt.cardAPR*100).toFixed(1)}%`;
+  return '';
+}
+
+function renderOptionSlider(containerId, options, groupKey, groupLabel){
   const container = document.getElementById(containerId);
-  container.innerHTML = options.map(opt => {
-    const selected = scenarioChoice[groupKey] === opt.id;
-    let detail = '';
-    if(opt.price !== undefined) detail = `$${opt.price.toLocaleString()} · $${opt.spareCash}/mo budget`;
-    else if(opt.loanAPR !== undefined) detail = `Loan ${(opt.loanAPR*100).toFixed(1)}% · Card ${(opt.cardAPR*100).toFixed(1)}%`;
-    return `<div class="chip${selected?' selected':''}" data-group="${groupKey}" data-id="${opt.id}">
-      <div class="chip-label">${opt.label}</div>
-      ${detail ? `<div class="chip-detail">${detail}</div>` : ''}
-      <div class="chip-blurb">${opt.blurb}</div>
+  const idx = Math.max(0, options.findIndex(o => o.id === scenarioChoice[groupKey]));
+
+  container.innerHTML = `
+    <input type="range" class="option-range" min="0" max="${options.length-1}" step="1" value="${idx}" aria-label="${groupLabel}">
+    <div class="option-ticks">${options.map(o => `<span class="option-tick">${o.label}</span>`).join('')}</div>
+    <div class="option-readout">
+      <div class="chip-label"></div>
+      <div class="chip-detail"></div>
+      <div class="chip-blurb"></div>
     </div>`;
-  }).join('');
-  container.querySelectorAll('.chip').forEach(el => {
-    el.addEventListener('click', () => {
-      scenarioChoice[groupKey] = el.dataset.id;
-      renderChips(containerId, options, groupKey);
-    });
+
+  const range = container.querySelector('.option-range');
+  const ticks = container.querySelectorAll('.option-tick');
+  const labelEl = container.querySelector('.chip-label');
+  const detailEl = container.querySelector('.chip-detail');
+  const blurbEl = container.querySelector('.chip-blurb');
+
+  function paint(){
+    const i = parseInt(range.value, 10);
+    const opt = options[i];
+    const detail = optionDetail(opt);
+    labelEl.textContent = opt.label;
+    detailEl.textContent = detail;
+    detailEl.style.display = detail ? '' : 'none';
+    blurbEl.textContent = opt.blurb;
+    range.setAttribute('aria-valuetext', opt.label);
+    ticks.forEach((t, ti) => t.classList.toggle('active', ti === i));
+  }
+  range.addEventListener('input', () => {
+    scenarioChoice[groupKey] = options[parseInt(range.value, 10)].id;
+    paint();
   });
+  paint();
 }
 
 function renderScenarioScreen(){
-  renderChips('chips-price', PRICE_OPTIONS, 'price');
-  renderChips('chips-rate', RATE_OPTIONS, 'rate');
-  renderChips('chips-shock', SHOCK_OPTIONS, 'shock');
+  renderOptionSlider('chips-price', PRICE_OPTIONS, 'price', 'Laptop price');
+  renderOptionSlider('chips-rate', RATE_OPTIONS, 'rate', 'Interest-rate environment');
+  renderOptionSlider('chips-shock', SHOCK_OPTIONS, 'shock', 'Income stability');
 }
 renderScenarioScreen();
 
@@ -1169,7 +1196,7 @@ function animateScenarioShuffle(finalCandidate){
   continueBtn.disabled = true;
   const originalLabel = btn.textContent;
   btn.textContent = '🎲 Rolling…';
-  document.querySelectorAll('.chip-row').forEach(el => el.classList.add('shuffling'));
+  document.querySelectorAll('.option-slider').forEach(el => el.classList.add('shuffling'));
 
   let frame = 0;
   function step(){
@@ -1185,7 +1212,7 @@ function animateScenarioShuffle(finalCandidate){
     } else {
       scenarioChoice = finalCandidate;
       renderScenarioScreen();
-      document.querySelectorAll('.chip-row').forEach(el => el.classList.remove('shuffling'));
+      document.querySelectorAll('.option-slider').forEach(el => el.classList.remove('shuffling'));
       btn.textContent = originalLabel;
       btn.disabled = false;
       continueBtn.disabled = false;
