@@ -78,6 +78,7 @@
     transition:transform .12s ease, box-shadow .12s ease;
     border-top:5px solid var(--ink);
     display:flex;flex-direction:column;
+    font:inherit;text-align:left;width:100%;margin:0;
   }
   .path-card:hover{transform:translateY(-3px);box-shadow:0 8px 18px rgba(27,42,74,.15);}
   .path-card.save{border-top-color:var(--save);}
@@ -137,6 +138,7 @@
   .dropzone p{margin:0;font-size:13.5px;color:#4b4636;}
   .dropzone code{font-family:'IBM Plex Mono',monospace;background:#fff;padding:1px 5px;border:1px solid var(--line);}
   .dropzone .link-btn{
+    background:none;border:none;padding:0;font:inherit;
     color:var(--ink);text-decoration:underline;cursor:pointer;font-weight:600;
   }
   .dropzone.dragover{border-color:var(--save);background:#e3ede3;}
@@ -150,6 +152,7 @@
   .loaded-run .compare{margin-top:6px;}
   .loaded-run .col{opacity:.92;}
   .loaded-run-clear{
+    background:none;border:none;padding:0;font:inherit;
     font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a6a6a;
     text-decoration:underline;cursor:pointer;margin-left:8px;
   }
@@ -231,6 +234,14 @@
     -webkit-appearance:none;appearance:none;
     width:100%;height:6px;background:var(--cream-2);border:1px solid var(--line);
     border-radius:3px;outline:none;
+  }
+  input[type="range"]:focus-visible{
+    outline:2px solid var(--ink);
+    outline-offset:2px;
+  }
+  button:focus-visible{
+    outline:2px solid var(--ink);
+    outline-offset:2px;
   }
   input[type="range"]::-webkit-slider-thumb{
     -webkit-appearance:none;appearance:none;
@@ -362,8 +373,8 @@
     <div class="card">
       <div class="eyebrow">Comparing to a Previous Run?</div>
       <div class="dropzone" id="dropzone-scenario">
-        <p>Drag a <code>.json</code> results file here, or <label for="file-input-scenario" class="link-btn">choose a file</label>.</p>
-        <input type="file" id="file-input-scenario" accept="application/json,.json" style="display:none;">
+        <p>Drag a <code>.json</code> results file here, or <button type="button" class="link-btn" id="choose-file-btn-scenario">choose a file</button>.</p>
+        <input type="file" id="file-input-scenario" accept="application/json,.json" style="display:none;" aria-label="Load a previous run JSON file">
       </div>
       <div id="load-status-scenario" class="load-status"></div>
       <div id="loaded-run-scenario" class="loaded-run hidden"></div>
@@ -387,21 +398,21 @@
     </div>
 
     <div class="paths">
-      <div class="path-card save" data-path="save">
+      <button type="button" class="path-card save" data-path="save">
         <h3>Save First</h3>
         <p id="save-blurb">Set the $60/month aside in a savings account. Buy the laptop once you've saved enough. You wait — but you earn interest, and you owe no one.</p>
         <div class="terms" id="save-terms">Savings APY: 3.0%<br>Deposit: $60/mo<br>Laptop arrives: when funded</div>
-      </div>
-      <div class="path-card loan" data-path="loan">
+      </button>
+      <button type="button" class="path-card loan" data-path="loan">
         <h3>Personal Loan</h3>
         <p id="loan-blurb">Borrow $1,200 from the bank today, get the laptop immediately, repay in fixed monthly installments over 2 years.</p>
         <div class="terms" id="loan-terms">APR: 9.0%<br>Term: 24 months<br>Laptop arrives: today</div>
-      </div>
-      <div class="path-card card" data-path="card">
+      </button>
+      <button type="button" class="path-card card" data-path="card">
         <h3>Credit Card</h3>
         <p id="card-blurb">Charge $1,200 to your credit card, get the laptop immediately. Pay it down however fast (or slow) you like each month.</p>
         <div class="terms" id="card-terms">APR: 24.0%<br>Term: open-ended<br>Laptop arrives: today</div>
-      </div>
+      </button>
     </div>
   </div>
 
@@ -457,8 +468,8 @@
     <div class="card" style="margin-top:20px;">
       <div class="eyebrow">Compare Against a Previous Run</div>
       <div class="dropzone" id="dropzone-summary">
-        <p>Drag a <code>.json</code> results file here, or <label for="file-input-summary" class="link-btn">choose a file</label>.</p>
-        <input type="file" id="file-input-summary" accept="application/json,.json" style="display:none;">
+        <p>Drag a <code>.json</code> results file here, or <button type="button" class="link-btn" id="choose-file-btn-summary">choose a file</button>.</p>
+        <input type="file" id="file-input-summary" accept="application/json,.json" style="display:none;" aria-label="Load a previous run JSON file">
       </div>
       <div id="load-status-summary" class="load-status"></div>
       <div id="loaded-run-summary" class="loaded-run hidden"></div>
@@ -1546,7 +1557,7 @@ function renderPartialSlider(due, available){
         <div class="ladder-note">Recovery is slower than the drop — a missed payment keeps dragging on the score even while you're doing everything right afterward.</div>
       </div>
       <div style="margin:16px 0 10px;">
-        <input type="range" id="partial-slider" min="0" max="${available.toFixed(2)}" step="1" value="${initial}">
+        <input type="range" id="partial-slider" min="0" max="${available.toFixed(2)}" step="1" value="${initial}" aria-label="How much to pay toward this shortfall" aria-valuetext="${fmt(initial)}">
         <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b6350;margin-top:4px;">
           <span>$0 — keep all your cash</span>
           <span>${fmt(available)} — keep none</span>
@@ -1575,6 +1586,7 @@ function renderPartialSlider(due, available){
     payEl.textContent = fmt(v);
     debtEl.textContent = fmt(v);
     cashEl.textContent = fmt(available - v);
+    slider.setAttribute('aria-valuetext', fmt(v));
   }
   slider.oninput = refresh;
   document.getElementById('preset-0').onclick = ()=>{ slider.value = 0; refresh(); };
@@ -1833,7 +1845,7 @@ function renderLoadedRunInto(suffix){
   container.classList.remove('hidden');
   const chosenName = PATH_META[loadedRun.chosenPath].name;
   container.innerHTML = `
-    <div class="eyebrow">Loaded Run <span class="loaded-run-clear" id="loaded-run-clear-${suffix}">clear</span></div>
+    <div class="eyebrow">Loaded Run <button type="button" class="loaded-run-clear" id="loaded-run-clear-${suffix}">clear</button></div>
     <h4>${loadedRun.scenario.recapText} — played ${chosenName}</h4>
     <div class="compare" id="loaded-compare-cols-${suffix}"></div>
   `;
@@ -1846,12 +1858,14 @@ function renderLoadedRunInto(suffix){
   });
 }
 
-// Shared wiring for a drop zone + hidden file input pair. Handles both
-// click-to-choose and drag-and-drop, since drag-and-drop alone would leave
-// no way in for keyboard or touch-only users.
+// Shared wiring for a drop zone + hidden file input pair. The "choose a
+// file" button gives keyboard and touch-only users a way in — drag-and-drop
+// alone would leave them stuck.
 function wireLoadZone(suffix){
   const zone = document.getElementById('dropzone-' + suffix);
   const input = document.getElementById('file-input-' + suffix);
+
+  document.getElementById('choose-file-btn-' + suffix).addEventListener('click', () => input.click());
 
   input.addEventListener('change', () => {
     if(input.files && input.files[0]) handleLoadedFile(input.files[0], suffix);
