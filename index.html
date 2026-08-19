@@ -115,7 +115,8 @@
   .option-readout .chip-blurb{font-size:12px;color:#4b4636;margin-top:5px;line-height:1.4;}
 
   .option-slider.shuffling{pointer-events:none;}
-  .option-slider.shuffling .option-readout{
+  .option-slider.shuffling .option-readout{border-color:var(--save);}
+  .option-slider.settle .option-readout{
     border-color:var(--save);
     animation:chip-pulse .18s ease-out;
   }
@@ -124,7 +125,7 @@
     100%{transform:scale(1);opacity:1;}
   }
   @media(prefers-reduced-motion:reduce){
-    .option-slider.shuffling .option-readout{animation:none;}
+    .option-slider.settle .option-readout{animation:none;}
   }
 
   /* Load-a-run drop zone */
@@ -1072,6 +1073,18 @@ function optionDetail(opt){
   return '';
 }
 
+function paintOptionSlider(container, options, idx){
+  const opt = options[idx];
+  const detail = optionDetail(opt);
+  container.querySelector('.chip-label').textContent = opt.label;
+  const detailEl = container.querySelector('.chip-detail');
+  detailEl.textContent = detail;
+  detailEl.style.display = detail ? '' : 'none';
+  container.querySelector('.chip-blurb').textContent = opt.blurb;
+  container.querySelector('.option-range').setAttribute('aria-valuetext', opt.label);
+  container.querySelectorAll('.option-tick').forEach((t, ti) => t.classList.toggle('active', ti === idx));
+}
+
 function renderOptionSlider(containerId, options, groupKey, groupLabel){
   const container = document.getElementById(containerId);
   const idx = Math.max(0, options.findIndex(o => o.id === scenarioChoice[groupKey]));
@@ -1086,27 +1099,12 @@ function renderOptionSlider(containerId, options, groupKey, groupLabel){
     </div>`;
 
   const range = container.querySelector('.option-range');
-  const ticks = container.querySelectorAll('.option-tick');
-  const labelEl = container.querySelector('.chip-label');
-  const detailEl = container.querySelector('.chip-detail');
-  const blurbEl = container.querySelector('.chip-blurb');
-
-  function paint(){
-    const i = parseInt(range.value, 10);
-    const opt = options[i];
-    const detail = optionDetail(opt);
-    labelEl.textContent = opt.label;
-    detailEl.textContent = detail;
-    detailEl.style.display = detail ? '' : 'none';
-    blurbEl.textContent = opt.blurb;
-    range.setAttribute('aria-valuetext', opt.label);
-    ticks.forEach((t, ti) => t.classList.toggle('active', ti === i));
-  }
   range.addEventListener('input', () => {
-    scenarioChoice[groupKey] = options[parseInt(range.value, 10)].id;
-    paint();
+    const i = parseInt(range.value, 10);
+    scenarioChoice[groupKey] = options[i].id;
+    paintOptionSlider(container, options, i);
   });
-  paint();
+  paintOptionSlider(container, options, idx);
 }
 
 function renderScenarioScreen(){
@@ -1175,11 +1173,47 @@ function randomizeScenario(){
 // Cycles through a few quick, purely-visual random picks before settling on
 // the already-decided final candidate — the weighting/corner-avoidance logic
 // has already run by this point, this is just motion, not another roll.
-// Frames slow down toward the end (like a wheel of fortune) so it reads as
-// "settling" rather than just flickering at a constant rate.
+// Each leg glides the slider thumbs smoothly to their next stop rather than
+// snapping, and legs slow down toward the end (like a wheel of fortune) so
+// it reads as "settling" rather than just flickering at a constant rate.
 const SHUFFLE_FRAMES = 9;
 const SHUFFLE_BASE_DELAY = 45;
 const SHUFFLE_DELAY_GROWTH = 9;
+
+// Eases a slider's thumb from its current position to targetIdx over
+// `duration` ms, repainting the readout as it crosses each step so the
+// motion reads as one continuous glide instead of a series of jump cuts.
+function tweenSliderTo(range, container, options, targetIdx, duration){
+  return new Promise(resolve => {
+    const fromVal = parseFloat(range.value);
+    if(fromVal === targetIdx){
+      paintOptionSlider(container, options, targetIdx);
+      resolve();
+      return;
+    }
+    const start = performance.now();
+    let lastPainted = -1;
+    function step(now){
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 2);
+      const val = fromVal + (targetIdx - fromVal) * eased;
+      range.value = val;
+      const roundedIdx = Math.round(val);
+      if(roundedIdx !== lastPainted){
+        paintOptionSlider(container, options, roundedIdx);
+        lastPainted = roundedIdx;
+      }
+      if(t < 1){
+        requestAnimationFrame(step);
+      } else {
+        range.value = targetIdx;
+        paintOptionSlider(container, options, targetIdx);
+        resolve();
+      }
+    }
+    requestAnimationFrame(step);
+  });
+}
 
 function animateScenarioShuffle(finalCandidate){
   if(isReduceMotionActive()){
@@ -1196,29 +1230,49 @@ function animateScenarioShuffle(finalCandidate){
   continueBtn.disabled = true;
   const originalLabel = btn.textContent;
   btn.textContent = '🎲 Rolling…';
-  document.querySelectorAll('.option-slider').forEach(el => el.classList.add('shuffling'));
+
+  const groups = [
+    { containerId:'chips-price', options: PRICE_OPTIONS, key:'price' },
+    { containerId:'chips-rate',  options: RATE_OPTIONS,  key:'rate'  },
+    { containerId:'chips-shock', options: SHOCK_OPTIONS, key:'shock' },
+  ].map(g => {
+    const container = document.getElementById(g.containerId);
+    container.classList.add('shuffling');
+    const range = container.querySelector('.option-range');
+    // step="1" makes the browser snap .value to the nearest integer even
+    // when we assign a fractional number — relax it so the thumb can glide
+    // through in-between positions, then restore it once settled.
+    range.step = 'any';
+    return { ...g, container, range };
+  });
 
   let frame = 0;
-  function step(){
+  function nextFrame(){
     if(frame < SHUFFLE_FRAMES){
-      scenarioChoice = {
+      const isLast = frame === SHUFFLE_FRAMES - 1;
+      const duration = SHUFFLE_BASE_DELAY + frame * SHUFFLE_DELAY_GROWTH;
+      const targets = isLast ? finalCandidate : {
         price: randomPickUniform(PRICE_OPTIONS),
         rate: randomPickUniform(RATE_OPTIONS),
         shock: randomPickUniform(SHOCK_OPTIONS),
       };
-      renderScenarioScreen();
-      frame++;
-      setTimeout(step, SHUFFLE_BASE_DELAY + frame * SHUFFLE_DELAY_GROWTH);
+      scenarioChoice = targets;
+      Promise.all(groups.map(g =>
+        tweenSliderTo(g.range, g.container, g.options, g.options.findIndex(o => o.id === targets[g.key]), duration)
+      )).then(() => { frame++; nextFrame(); });
     } else {
-      scenarioChoice = finalCandidate;
-      renderScenarioScreen();
-      document.querySelectorAll('.option-slider').forEach(el => el.classList.remove('shuffling'));
+      groups.forEach(g => {
+        g.range.step = '1';
+        g.container.classList.remove('shuffling');
+        g.container.classList.add('settle');
+      });
+      setTimeout(() => groups.forEach(g => g.container.classList.remove('settle')), 200);
       btn.textContent = originalLabel;
       btn.disabled = false;
       continueBtn.disabled = false;
     }
   }
-  step();
+  nextFrame();
 }
 
 function randomPickUniform(options){
