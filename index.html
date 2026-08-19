@@ -148,7 +148,7 @@
 
   .loaded-run{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line);}
   .loaded-run .eyebrow{margin-bottom:2px;}
-  .loaded-run h4{font-size:15px;margin:2px 0 10px;font-family:'Spectral',serif;font-weight:600;}
+  .loaded-run h3{font-size:15px;margin:2px 0 10px;font-family:'Spectral',serif;font-weight:600;}
   .loaded-run .compare{margin-top:6px;}
   .loaded-run .col{opacity:.92;}
   .loaded-run-clear{
@@ -314,7 +314,7 @@
   .compare .col.loan{border-top-color:var(--loan);}
   .compare .col.card{border-top-color:var(--card);}
   .compare .col.chosen{box-shadow:0 0 0 2px var(--ink) inset;}
-  .compare .col h4{font-family:'IBM Plex Mono',monospace;text-transform:uppercase;font-size:12px;letter-spacing:.08em;margin:0 0 10px;}
+  .compare .col .col-heading{font-family:'IBM Plex Mono',monospace;text-transform:uppercase;font-size:12px;letter-spacing:.08em;margin:0 0 10px;}
   .compare .row{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px dashed var(--line);}
   .compare .row .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
 
@@ -455,7 +455,7 @@
       <div class="eyebrow">Month 24 — Results</div>
       <div class="eyebrow" id="summary-scenario-recap" style="color:#6b6350;margin-bottom:2px;"></div>
       <h2 id="summary-headline">Here's what your laptop really cost.</h2>
-      <canvas id="chart" width="800" height="220"></canvas>
+      <canvas id="chart" width="800" height="220">A line chart comparing net worth over 24 months across the three payment paths — see the comparison table below for exact figures.</canvas>
       <div style="display:flex;gap:16px;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:6px;">
         <span><span style="color:var(--save);">■</span> Save First</span>
         <span><span style="color:var(--loan);">■</span> Personal Loan</span>
@@ -478,7 +478,7 @@
     <div class="card" style="margin-top:20px;">
       <div class="eyebrow">Meanwhile, Your Credit Score</div>
       <h3 style="font-size:17px;">Same 24 months, three very different files</h3>
-      <canvas id="chart-score" width="800" height="220"></canvas>
+      <canvas id="chart-score" width="800" height="220">A line chart comparing credit score over 24 months across the three payment paths — see the factor breakdown below for exact figures.</canvas>
       <div style="display:flex;gap:16px;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:6px;">
         <span><span style="color:var(--save);">■</span> Save First</span>
         <span><span style="color:var(--loan);">■</span> Personal Loan</span>
@@ -1846,10 +1846,10 @@ function renderLoadedRunInto(suffix){
   const chosenName = PATH_META[loadedRun.chosenPath].name;
   container.innerHTML = `
     <div class="eyebrow">Loaded Run <button type="button" class="loaded-run-clear" id="loaded-run-clear-${suffix}">clear</button></div>
-    <h4>${loadedRun.scenario.recapText} — played ${chosenName}</h4>
+    <h3>${loadedRun.scenario.recapText} — played ${chosenName}</h3>
     <div class="compare" id="loaded-compare-cols-${suffix}"></div>
   `;
-  renderCompareColumnsFromSummaries(`loaded-compare-cols-${suffix}`, loadedRun.paths, loadedRun.chosenPath);
+  renderCompareColumnsFromSummaries(`loaded-compare-cols-${suffix}`, loadedRun.paths, loadedRun.chosenPath, 4);
   document.getElementById(`loaded-run-clear-${suffix}`).addEventListener('click', () => {
     loadedRun = null;
     renderLoadedRunEverywhere();
@@ -1945,15 +1945,16 @@ function renderCompare(results){
     loan: buildPathSummary('loan', results),
     card: buildPathSummary('card', results),
   };
-  renderCompareColumnsFromSummaries('compare-cols', summaries, results.chosenPath);
+  renderCompareColumnsFromSummaries('compare-cols', summaries, results.chosenPath, 3);
 }
 
 // Renders three comparison columns from already-summarized path data — the
 // same shape buildPathSummary() produces for a live run AND the same shape
 // a loaded JSON export's `paths` object already has. This is what lets a
 // previously-downloaded run render here with zero adaptation.
-function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId){
+function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId, headingLevel){
   const container = document.getElementById(containerId);
+  const hTag = 'h' + (headingLevel || 3);
   container.innerHTML = '';
   ['save','loan','card'].forEach(p=>{
     const sum = summaries[p];
@@ -1963,7 +1964,7 @@ function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId)
     const col = document.createElement('div');
     col.className = 'col ' + p + (p===chosenPathId ? ' chosen':'');
     col.innerHTML = `
-      <h4>${sum.pathName}${p===chosenPathId?' · played this run':''}</h4>
+      <${hTag} class="col-heading">${sum.pathName}${p===chosenPathId?' · played this run':''}</${hTag}>
       <div class="row"><span>Total actually paid</span><span class="v">${fmt(sum.totalPaid)}</span></div>
       <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?sum.interestEarned:sum.interestPaid)}</span></div>
       ${p!=='save' && sum.lateFees>0 ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(sum.lateFees)}</span></div>` : ''}
@@ -2079,6 +2080,13 @@ function drawChart(results){
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0,0,w,h);
 
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', `Net worth over ${MONTHS} months. Final net worth — ` +
+    ['save','loan','card'].map(p => {
+      const hist = results[p].history;
+      return `${PATH_META[p].name}: ${fmt(hist[hist.length-1].netWorth)}`;
+    }).join(', ') + '. See the comparison table below for full figures.');
+
   const allVals = [];
   ['save','loan','card'].forEach(p=> results[p].history.forEach(pt=>allVals.push(pt.netWorth)));
   const minV = Math.min(0, ...allVals);
@@ -2128,6 +2136,13 @@ function drawScoreChart(results){
   const ctx = canvas.getContext('2d');
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0,0,w,h);
+
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', `Credit score over ${MONTHS} months, starting at ${STARTING_SCORE}. Final score — ` +
+    ['save','loan','card'].map(p => {
+      const hist = results[p].creditHistory;
+      return `${PATH_META[p].name}: ${hist[hist.length-1].score}`;
+    }).join(', ') + '.');
 
   const allVals = [];
   ['save','loan','card'].forEach(p=> results[p].creditHistory.forEach(pt=>allVals.push(pt.score)));
