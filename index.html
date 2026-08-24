@@ -19,11 +19,11 @@
     --card:#A63D40;
     --card-bg:#f2e2df;
     --stamp:#8b1e1e;
-    --amber:#B5791E;
+    --amber:#96631A;
     --score-exceptional:#1F5C3F;
     --score-verygood:#2F6F4E;
     --score-good:#3C5A82;
-    --score-fair:#B5791E;
+    --score-fair:#96631A;
     --score-poor:#A63D40;
   }
   *{box-sizing:border-box;}
@@ -78,6 +78,7 @@
     transition:transform .12s ease, box-shadow .12s ease;
     border-top:5px solid var(--ink);
     display:flex;flex-direction:column;
+    font:inherit;text-align:left;width:100%;margin:0;
   }
   .path-card:hover{transform:translateY(-3px);box-shadow:0 8px 18px rgba(27,42,74,.15);}
   .path-card.save{border-top-color:var(--save);}
@@ -137,20 +138,22 @@
   .dropzone p{margin:0;font-size:13.5px;color:#4b4636;}
   .dropzone code{font-family:'IBM Plex Mono',monospace;background:#fff;padding:1px 5px;border:1px solid var(--line);}
   .dropzone .link-btn{
+    background:none;border:none;padding:0;font:inherit;
     color:var(--ink);text-decoration:underline;cursor:pointer;font-weight:600;
   }
   .dropzone.dragover{border-color:var(--save);background:#e3ede3;}
-  .load-status{font-family:'IBM Plex Mono',monospace;font-size:12px;margin-top:8px;min-height:16px;}
+  .load-status{display:block;font-family:'IBM Plex Mono',monospace;font-size:12px;margin-top:8px;min-height:16px;}
   .load-status.ok{color:var(--save);}
   .load-status.err{color:var(--stamp);}
 
   .loaded-run{margin-top:16px;padding-top:14px;border-top:1px dashed var(--line);}
   .loaded-run .eyebrow{margin-bottom:2px;}
-  .loaded-run h4{font-size:15px;margin:2px 0 10px;font-family:'Spectral',serif;font-weight:600;}
+  .loaded-run h3{font-size:15px;margin:2px 0 10px;font-family:'Spectral',serif;font-weight:600;}
   .loaded-run .compare{margin-top:6px;}
   .loaded-run .col{opacity:.92;}
   .loaded-run-clear{
-    font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a6a6a;
+    background:none;border:none;padding:0;font:inherit;
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:#765454;
     text-decoration:underline;cursor:pointer;margin-left:8px;
   }
 
@@ -232,6 +235,14 @@
     width:100%;height:6px;background:var(--cream-2);border:1px solid var(--line);
     border-radius:3px;outline:none;
   }
+  input[type="range"]:focus-visible{
+    outline:2px solid var(--ink);
+    outline-offset:2px;
+  }
+  button:focus-visible{
+    outline:2px solid var(--ink);
+    outline-offset:2px;
+  }
   input[type="range"]::-webkit-slider-thumb{
     -webkit-appearance:none;appearance:none;
     width:18px;height:18px;border-radius:50%;background:var(--ink);
@@ -280,7 +291,7 @@
   .ladder-step.now{border-color:var(--line);background:var(--cream-2);}
   .ladder-score{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;color:#5a1f1f;}
   .ladder-step.now .ladder-score{color:var(--ink);}
-  .ladder-label{font-family:'IBM Plex Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:#8a6a6a;margin-top:1px;}
+  .ladder-label{font-family:'IBM Plex Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:#765454;margin-top:1px;}
   .ladder-step.now .ladder-label{color:#6b6350;}
   .ladder-delta{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--stamp);margin-top:1px;}
   .ladder-arrow{font-size:13px;color:#a88;flex-shrink:0;}
@@ -303,7 +314,7 @@
   .compare .col.loan{border-top-color:var(--loan);}
   .compare .col.card{border-top-color:var(--card);}
   .compare .col.chosen{box-shadow:0 0 0 2px var(--ink) inset;}
-  .compare .col h4{font-family:'IBM Plex Mono',monospace;text-transform:uppercase;font-size:12px;letter-spacing:.08em;margin:0 0 10px;}
+  .compare .col .col-heading{font-family:'IBM Plex Mono',monospace;text-transform:uppercase;font-size:12px;letter-spacing:.08em;margin:0 0 10px;}
   .compare .row{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px dashed var(--line);}
   .compare .row .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
 
@@ -326,7 +337,7 @@
   .factor-row .pct{font-family:'IBM Plex Mono',monospace;text-align:right;}
 
   .hidden{display:none !important;}
-  footer.note{text-align:center;font-size:12px;color:#8a8168;margin-top:30px;}
+  footer.note{text-align:center;font-size:12px;color:#6b6350;margin-top:30px;}
 </style>
 </head>
 <body>
@@ -362,10 +373,10 @@
     <div class="card">
       <div class="eyebrow">Comparing to a Previous Run?</div>
       <div class="dropzone" id="dropzone-scenario">
-        <p>Drag a <code>.json</code> results file here, or <label for="file-input-scenario" class="link-btn">choose a file</label>.</p>
-        <input type="file" id="file-input-scenario" accept="application/json,.json" style="display:none;">
+        <p>Drag a <code>.json</code> results file here, or <button type="button" class="link-btn" id="choose-file-btn-scenario">choose a file</button>.</p>
+        <input type="file" id="file-input-scenario" accept="application/json,.json" style="display:none;" aria-label="Load a previous run JSON file">
       </div>
-      <div id="load-status-scenario" class="load-status"></div>
+      <output id="load-status-scenario" class="load-status"></output>
       <div id="loaded-run-scenario" class="loaded-run hidden"></div>
     </div>
 
@@ -387,34 +398,34 @@
     </div>
 
     <div class="paths">
-      <div class="path-card save" data-path="save">
+      <button type="button" class="path-card save" data-path="save">
         <h3>Save First</h3>
         <p id="save-blurb">Set the $60/month aside in a savings account. Buy the laptop once you've saved enough. You wait — but you earn interest, and you owe no one.</p>
         <div class="terms" id="save-terms">Savings APY: 3.0%<br>Deposit: $60/mo<br>Laptop arrives: when funded</div>
-      </div>
-      <div class="path-card loan" data-path="loan">
+      </button>
+      <button type="button" class="path-card loan" data-path="loan">
         <h3>Personal Loan</h3>
         <p id="loan-blurb">Borrow $1,200 from the bank today, get the laptop immediately, repay in fixed monthly installments over 2 years.</p>
         <div class="terms" id="loan-terms">APR: 9.0%<br>Term: 24 months<br>Laptop arrives: today</div>
-      </div>
-      <div class="path-card card" data-path="card">
+      </button>
+      <button type="button" class="path-card card" data-path="card">
         <h3>Credit Card</h3>
         <p id="card-blurb">Charge $1,200 to your credit card, get the laptop immediately. Pay it down however fast (or slow) you like each month.</p>
         <div class="terms" id="card-terms">APR: 24.0%<br>Term: open-ended<br>Laptop arrives: today</div>
-      </div>
+      </button>
     </div>
   </div>
 
   <!-- SCREEN 2: LEDGER SIMULATION -->
   <div id="screen-ledger" class="hidden">
     <div class="eyebrow" id="ledger-scenario-recap" style="color:#6b6350;margin-bottom:8px;"></div>
-    <div class="statusbar">
+    <output class="statusbar" aria-atomic="true">
       <div class="stat"><div class="eyebrow">Month</div><div class="val" id="stat-month">0 / 24</div></div>
       <div class="stat"><div class="eyebrow">Cash on hand</div><div class="val" id="stat-cash">$0</div></div>
       <div class="stat"><div class="eyebrow" id="stat-debt-label">Balance owed</div><div class="val" id="stat-debt">$0</div></div>
       <div class="stat"><div class="eyebrow">Net worth</div><div class="val" id="stat-net">$0</div></div>
       <div class="stat"><div class="eyebrow">Credit score</div><div class="val" id="stat-score">700 <span class="score-pill" id="stat-score-pill" style="background:var(--score-good);">Good</span></div></div>
-    </div>
+    </output>
 
     <div class="card">
       <div class="ledger-head">
@@ -422,12 +433,12 @@
         <span class="eyebrow" id="path-badge"></span>
       </div>
 
-      <div id="prompt-area"></div>
+      <div id="prompt-area" tabindex="-1" aria-live="polite" aria-atomic="true"></div>
 
       <div class="ledger-scroll">
         <table class="ledger">
           <thead><tr><th>Mo.</th><th>Entry</th><th style="text-align:right;">Amount</th><th style="text-align:right;">Balance</th></tr></thead>
-          <tbody id="ledger-body"></tbody>
+          <tbody id="ledger-body" role="log" aria-live="polite" aria-relevant="additions"></tbody>
         </table>
       </div>
 
@@ -444,7 +455,7 @@
       <div class="eyebrow">Month 24 — Results</div>
       <div class="eyebrow" id="summary-scenario-recap" style="color:#6b6350;margin-bottom:2px;"></div>
       <h2 id="summary-headline">Here's what your laptop really cost.</h2>
-      <canvas id="chart" width="800" height="220"></canvas>
+      <canvas id="chart" width="800" height="220">A line chart comparing net worth over 24 months across the three payment paths — see the comparison table below for exact figures.</canvas>
       <div style="display:flex;gap:16px;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:6px;">
         <span><span style="color:var(--save);">■</span> Save First</span>
         <span><span style="color:var(--loan);">■</span> Personal Loan</span>
@@ -457,17 +468,17 @@
     <div class="card" style="margin-top:20px;">
       <div class="eyebrow">Compare Against a Previous Run</div>
       <div class="dropzone" id="dropzone-summary">
-        <p>Drag a <code>.json</code> results file here, or <label for="file-input-summary" class="link-btn">choose a file</label>.</p>
-        <input type="file" id="file-input-summary" accept="application/json,.json" style="display:none;">
+        <p>Drag a <code>.json</code> results file here, or <button type="button" class="link-btn" id="choose-file-btn-summary">choose a file</button>.</p>
+        <input type="file" id="file-input-summary" accept="application/json,.json" style="display:none;" aria-label="Load a previous run JSON file">
       </div>
-      <div id="load-status-summary" class="load-status"></div>
+      <output id="load-status-summary" class="load-status"></output>
       <div id="loaded-run-summary" class="loaded-run hidden"></div>
     </div>
 
     <div class="card" style="margin-top:20px;">
       <div class="eyebrow">Meanwhile, Your Credit Score</div>
       <h3 style="font-size:17px;">Same 24 months, three very different files</h3>
-      <canvas id="chart-score" width="800" height="220"></canvas>
+      <canvas id="chart-score" width="800" height="220">A line chart comparing credit score over 24 months across the three payment paths — see the factor breakdown below for exact figures.</canvas>
       <div style="display:flex;gap:16px;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:6px;">
         <span><span style="color:var(--save);">■</span> Save First</span>
         <span><span style="color:var(--loan);">■</span> Personal Loan</span>
@@ -1404,6 +1415,7 @@ function showPromptIfNeeded(){
       </div>`;
     document.getElementById('choice-min').onclick = ()=>{ state.cardMonthlyChoice='min'; uiLocked=false; advanceMonth(false); };
     document.getElementById('choice-fixed').onclick = ()=>{ state.cardMonthlyChoice='fixed70'; uiLocked=false; advanceMonth(false); };
+    area.focus();
     return true;
   }
   return false;
@@ -1497,6 +1509,7 @@ function renderShortfallChoice(due, available){
   document.getElementById('choice-partial-open').onclick = ()=>{ renderPartialSlider(due, available); };
   document.getElementById('choice-overdraft').onclick = ()=>{ uiLocked=false; resolveDebtPayment('overdraft', due, available); wrapUpMonth(); };
   document.getElementById('choice-backup').onclick = ()=>{ uiLocked=false; resolveDebtPayment('card', due, available); wrapUpMonth(); };
+  area.focus();
 }
 
 function renderPartialSlider(due, available){
@@ -1546,7 +1559,7 @@ function renderPartialSlider(due, available){
         <div class="ladder-note">Recovery is slower than the drop — a missed payment keeps dragging on the score even while you're doing everything right afterward.</div>
       </div>
       <div style="margin:16px 0 10px;">
-        <input type="range" id="partial-slider" min="0" max="${available.toFixed(2)}" step="1" value="${initial}">
+        <input type="range" id="partial-slider" min="0" max="${available.toFixed(2)}" step="1" value="${initial}" aria-label="How much to pay toward this shortfall" aria-valuetext="${fmt(initial)}">
         <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b6350;margin-top:4px;">
           <span>$0 — keep all your cash</span>
           <span>${fmt(available)} — keep none</span>
@@ -1575,6 +1588,7 @@ function renderPartialSlider(due, available){
     payEl.textContent = fmt(v);
     debtEl.textContent = fmt(v);
     cashEl.textContent = fmt(available - v);
+    slider.setAttribute('aria-valuetext', fmt(v));
   }
   slider.oninput = refresh;
   document.getElementById('preset-0').onclick = ()=>{ slider.value = 0; refresh(); };
@@ -1587,6 +1601,7 @@ function renderPartialSlider(due, available){
     resolveDebtPayment('partial', due, available, amt);
     wrapUpMonth();
   };
+  area.focus();
 }
 
 function wrapUpMonth(){
@@ -1789,6 +1804,10 @@ function setLoadStatus(suffix, message, kind){
   const el = document.getElementById('load-status-' + suffix);
   el.textContent = message;
   el.className = 'load-status' + (kind ? ' ' + kind : '');
+  // Errors need to interrupt (role="alert"); success/neutral messages use
+  // <output>'s implicit polite "status" announcement, so no role override.
+  if(kind === 'err') el.setAttribute('role', 'alert');
+  else el.removeAttribute('role');
 }
 
 function handleLoadedFile(file, suffix){
@@ -1833,11 +1852,11 @@ function renderLoadedRunInto(suffix){
   container.classList.remove('hidden');
   const chosenName = PATH_META[loadedRun.chosenPath].name;
   container.innerHTML = `
-    <div class="eyebrow">Loaded Run <span class="loaded-run-clear" id="loaded-run-clear-${suffix}">clear</span></div>
-    <h4>${loadedRun.scenario.recapText} — played ${chosenName}</h4>
+    <div class="eyebrow">Loaded Run <button type="button" class="loaded-run-clear" id="loaded-run-clear-${suffix}">clear</button></div>
+    <h3>${loadedRun.scenario.recapText} — played ${chosenName}</h3>
     <div class="compare" id="loaded-compare-cols-${suffix}"></div>
   `;
-  renderCompareColumnsFromSummaries(`loaded-compare-cols-${suffix}`, loadedRun.paths, loadedRun.chosenPath);
+  renderCompareColumnsFromSummaries(`loaded-compare-cols-${suffix}`, loadedRun.paths, loadedRun.chosenPath, 4);
   document.getElementById(`loaded-run-clear-${suffix}`).addEventListener('click', () => {
     loadedRun = null;
     renderLoadedRunEverywhere();
@@ -1846,12 +1865,14 @@ function renderLoadedRunInto(suffix){
   });
 }
 
-// Shared wiring for a drop zone + hidden file input pair. Handles both
-// click-to-choose and drag-and-drop, since drag-and-drop alone would leave
-// no way in for keyboard or touch-only users.
+// Shared wiring for a drop zone + hidden file input pair. The "choose a
+// file" button gives keyboard and touch-only users a way in — drag-and-drop
+// alone would leave them stuck.
 function wireLoadZone(suffix){
   const zone = document.getElementById('dropzone-' + suffix);
   const input = document.getElementById('file-input-' + suffix);
+
+  document.getElementById('choose-file-btn-' + suffix).addEventListener('click', () => input.click());
 
   input.addEventListener('change', () => {
     if(input.files && input.files[0]) handleLoadedFile(input.files[0], suffix);
@@ -1931,15 +1952,16 @@ function renderCompare(results){
     loan: buildPathSummary('loan', results),
     card: buildPathSummary('card', results),
   };
-  renderCompareColumnsFromSummaries('compare-cols', summaries, results.chosenPath);
+  renderCompareColumnsFromSummaries('compare-cols', summaries, results.chosenPath, 3);
 }
 
 // Renders three comparison columns from already-summarized path data — the
 // same shape buildPathSummary() produces for a live run AND the same shape
 // a loaded JSON export's `paths` object already has. This is what lets a
 // previously-downloaded run render here with zero adaptation.
-function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId){
+function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId, headingLevel){
   const container = document.getElementById(containerId);
+  const hTag = 'h' + (headingLevel || 3);
   container.innerHTML = '';
   ['save','loan','card'].forEach(p=>{
     const sum = summaries[p];
@@ -1949,7 +1971,7 @@ function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId)
     const col = document.createElement('div');
     col.className = 'col ' + p + (p===chosenPathId ? ' chosen':'');
     col.innerHTML = `
-      <h4>${sum.pathName}${p===chosenPathId?' · played this run':''}</h4>
+      <${hTag} class="col-heading">${sum.pathName}${p===chosenPathId?' · played this run':''}</${hTag}>
       <div class="row"><span>Total actually paid</span><span class="v">${fmt(sum.totalPaid)}</span></div>
       <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?sum.interestEarned:sum.interestPaid)}</span></div>
       ${p!=='save' && sum.lateFees>0 ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(sum.lateFees)}</span></div>` : ''}
@@ -2065,6 +2087,13 @@ function drawChart(results){
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0,0,w,h);
 
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', `Net worth over ${MONTHS} months. Final net worth — ` +
+    ['save','loan','card'].map(p => {
+      const hist = results[p].history;
+      return `${PATH_META[p].name}: ${fmt(hist[hist.length-1].netWorth)}`;
+    }).join(', ') + '. See the comparison table below for full figures.');
+
   const allVals = [];
   ['save','loan','card'].forEach(p=> results[p].history.forEach(pt=>allVals.push(pt.netWorth)));
   const minV = Math.min(0, ...allVals);
@@ -2114,6 +2143,13 @@ function drawScoreChart(results){
   const ctx = canvas.getContext('2d');
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0,0,w,h);
+
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', `Credit score over ${MONTHS} months, starting at ${STARTING_SCORE}. Final score — ` +
+    ['save','loan','card'].map(p => {
+      const hist = results[p].creditHistory;
+      return `${PATH_META[p].name}: ${hist[hist.length-1].score}`;
+    }).join(', ') + '.');
 
   const allVals = [];
   ['save','loan','card'].forEach(p=> results[p].creditHistory.forEach(pt=>allVals.push(pt.score)));
