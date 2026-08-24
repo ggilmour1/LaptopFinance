@@ -353,7 +353,7 @@
   <div id="screen-scenario">
     <div class="card">
       <div class="eyebrow">Set Up This Run</div>
-      <h2>Choose your scenario</h2>
+      <h2 id="scenario-setup-headline" tabindex="-1">Choose your scenario</h2>
       <p style="line-height:1.6;font-size:15px;">Same three ways to pay, different conditions. Pick a laptop price, an interest-rate environment, and whether life throws a real curveball at you this time — then compare how each path holds up.</p>
     </div>
 
@@ -391,7 +391,7 @@
   <div id="screen-pick" class="hidden">
     <div class="card">
       <div class="eyebrow">The Scenario <span id="scenario-recap"></span> <a href="#" id="scenario-change-link" style="font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:none;letter-spacing:0;">← change</a></div>
-      <h2 id="scenario-headline">You need a $1,200 laptop.</h2>
+      <h2 id="scenario-headline" tabindex="-1">You need a $1,200 laptop.</h2>
       <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, a small <b>$150 cushion</b> already sitting in checking, and about <b id="spare-cash-mention">$60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in dollars <i>and</i> in credit score.</p>
       <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b id="card-limit-mention">$3,000</b>. If a payment ever costs more than your cushion plus that month's spare cash, you'll have to decide how to cover it — <b>pay what you can, overdraft your account, or charge it to a backup card</b>. Each costs you differently.</p>
       <p id="scenario-shock-note" style="line-height:1.6;font-size:15px;display:none;background:#e8e0f5;border-left:3px solid #5b3a8a;padding:8px 12px;">⚠ This run includes a <b>job-loss shock</b>: for 2 months partway through, your spare cash drops to $0 — no matter which path you're on.</p>
@@ -429,7 +429,7 @@
 
     <div class="card">
       <div class="ledger-head">
-        <h2 id="ledger-title" style="font-size:18px;">Your Ledger</h2>
+        <h2 id="ledger-title" style="font-size:18px;" tabindex="-1">Your Ledger</h2>
         <span class="eyebrow" id="path-badge"></span>
       </div>
 
@@ -454,7 +454,7 @@
     <div class="card">
       <div class="eyebrow">Month 24 — Results</div>
       <div class="eyebrow" id="summary-scenario-recap" style="color:#6b6350;margin-bottom:2px;"></div>
-      <h2 id="summary-headline">Here's what your laptop really cost.</h2>
+      <h2 id="summary-headline" tabindex="-1">Here's what your laptop really cost.</h2>
       <canvas id="chart" width="800" height="220">A line chart comparing net worth over 24 months across the three payment paths — see the comparison table below for exact figures.</canvas>
       <div style="display:flex;gap:16px;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:6px;">
         <span><span style="color:var(--save);">■</span> Save First</span>
@@ -1358,12 +1358,14 @@ document.getElementById('btn-scenario-continue').addEventListener('click', () =>
   applyScenarioTextToPickScreen();
   document.getElementById('screen-scenario').classList.add('hidden');
   document.getElementById('screen-pick').classList.remove('hidden');
+  document.getElementById('scenario-headline').focus();
 });
 
 document.getElementById('scenario-change-link').addEventListener('click', (e) => {
   e.preventDefault();
   document.getElementById('screen-pick').classList.add('hidden');
   document.getElementById('screen-scenario').classList.remove('hidden');
+  document.getElementById('scenario-setup-headline').focus();
 });
 
 /* ---------- UI flow ---------- */
@@ -1394,6 +1396,7 @@ function startGame(path){
   }
   recordHistory();
   updateStatusBar();
+  document.getElementById('ledger-title').focus();
 }
 
 let uiLocked = false;
@@ -1655,11 +1658,13 @@ document.getElementById('btn-fastforward').addEventListener('click', ()=>{
 document.getElementById('btn-restart').addEventListener('click', ()=>{
   document.getElementById('screen-summary').classList.add('hidden');
   document.getElementById('screen-pick').classList.remove('hidden');
+  document.getElementById('scenario-headline').focus();
 });
 
 document.getElementById('btn-change-scenario').addEventListener('click', ()=>{
   document.getElementById('screen-summary').classList.add('hidden');
   document.getElementById('screen-scenario').classList.remove('hidden');
+  document.getElementById('scenario-setup-headline').focus();
 });
 
 // Structured per-path summary — the single source of truth both the
@@ -1925,6 +1930,7 @@ let lastGameResults = null; // holds the most recently finished run's full resul
 function finishGame(){
   document.getElementById('screen-ledger').classList.add('hidden');
   document.getElementById('screen-summary').classList.remove('hidden');
+  document.getElementById('summary-headline').focus();
 
   const results = {
     save: runFullSim('save'),
