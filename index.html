@@ -391,26 +391,26 @@
   <div id="screen-pick" class="hidden">
     <div class="card">
       <div class="eyebrow">The Scenario <span id="scenario-recap"></span> <a href="#" id="scenario-change-link" style="font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:none;letter-spacing:0;">← change</a></div>
-      <h2 id="scenario-headline" tabindex="-1">You need a $1,200 laptop.</h2>
-      <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, a small <b>$150 cushion</b> already sitting in checking, and about <b id="spare-cash-mention">$60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in dollars <i>and</i> in credit score.</p>
-      <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b id="card-limit-mention">$3,000</b>. If a payment ever costs more than your cushion plus that month's spare cash, you'll have to decide how to cover it — <b>pay what you can, overdraft your account, or charge it to a backup card</b>. Each costs you differently.</p>
-      <p id="scenario-shock-note" style="line-height:1.6;font-size:15px;display:none;background:#e8e0f5;border-left:3px solid #5b3a8a;padding:8px 12px;">⚠ This run includes a <b>job-loss shock</b>: for 2 months partway through, your spare cash drops to $0 — no matter which path you're on.</p>
+      <h2 id="scenario-headline" tabindex="-1">You need a £1,200 laptop.</h2>
+      <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, a small <b>£150 cushion</b> already sitting in checking, and about <b id="spare-cash-mention">£60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in pounds <i>and</i> in credit score.</p>
+      <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b id="card-limit-mention">£3,000</b>. If a payment ever costs more than your cushion plus that month's spare cash, you'll have to decide how to cover it — <b>pay what you can, overdraft your account, or charge it to a backup card</b>. Each costs you differently.</p>
+      <p id="scenario-shock-note" style="line-height:1.6;font-size:15px;display:none;background:#e8e0f5;border-left:3px solid #5b3a8a;padding:8px 12px;">⚠ This run includes a <b>job-loss shock</b>: for 2 months partway through, your spare cash drops to £0 — no matter which path you're on.</p>
     </div>
 
     <div class="paths">
       <button type="button" class="path-card save" data-path="save">
         <h3>Save First</h3>
-        <p id="save-blurb">Set the $60/month aside in a savings account. Buy the laptop once you've saved enough. You wait — but you earn interest, and you owe no one.</p>
-        <div class="terms" id="save-terms">Savings APY: 3.0%<br>Deposit: $60/mo<br>Laptop arrives: when funded</div>
+        <p id="save-blurb">Set the £60/month aside in a savings account. Buy the laptop once you've saved enough. You wait — but you earn interest, and you owe no one.</p>
+        <div class="terms" id="save-terms">Savings APY: 3.0%<br>Deposit: £60/mo<br>Laptop arrives: when funded</div>
       </button>
       <button type="button" class="path-card loan" data-path="loan">
         <h3>Personal Loan</h3>
-        <p id="loan-blurb">Borrow $1,200 from the bank today, get the laptop immediately, repay in fixed monthly installments over 2 years.</p>
+        <p id="loan-blurb">Borrow £1,200 from the bank today, get the laptop immediately, repay in fixed monthly installments over 2 years.</p>
         <div class="terms" id="loan-terms">APR: 9.0%<br>Term: 24 months<br>Laptop arrives: today</div>
       </button>
       <button type="button" class="path-card card" data-path="card">
         <h3>Credit Card</h3>
-        <p id="card-blurb">Charge $1,200 to your credit card, get the laptop immediately. Pay it down however fast (or slow) you like each month.</p>
+        <p id="card-blurb">Charge £1,200 to your credit card, get the laptop immediately. Pay it down however fast (or slow) you like each month.</p>
         <div class="terms" id="card-terms">APR: 24.0%<br>Term: open-ended<br>Laptop arrives: today</div>
       </button>
     </div>
@@ -421,9 +421,9 @@
     <div class="eyebrow" id="ledger-scenario-recap" style="color:#6b6350;margin-bottom:8px;"></div>
     <output class="statusbar" aria-atomic="true">
       <div class="stat"><div class="eyebrow">Month</div><div class="val" id="stat-month">0 / 24</div></div>
-      <div class="stat"><div class="eyebrow">Cash on hand</div><div class="val" id="stat-cash">$0</div></div>
-      <div class="stat"><div class="eyebrow" id="stat-debt-label">Balance owed</div><div class="val" id="stat-debt">$0</div></div>
-      <div class="stat"><div class="eyebrow">Net worth</div><div class="val" id="stat-net">$0</div></div>
+      <div class="stat"><div class="eyebrow">Cash on hand</div><div class="val" id="stat-cash">£0</div></div>
+      <div class="stat"><div class="eyebrow" id="stat-debt-label">Balance owed</div><div class="val" id="stat-debt">£0</div></div>
+      <div class="stat"><div class="eyebrow">Net worth</div><div class="val" id="stat-net">£0</div></div>
       <div class="stat"><div class="eyebrow">Credit score</div><div class="val" id="stat-score">700 <span class="score-pill" id="stat-score-pill" style="background:var(--score-good);">Good</span></div></div>
     </output>
 
@@ -554,8 +554,8 @@ let state = null;
 
 function fmt(n){
   const neg = n < 0;
-  const v = Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
-  return (neg?'-$':'$') + v;
+  const v = Math.abs(n).toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2});
+  return (neg?'-£':'£') + v;
 }
 
 function initState(path){
@@ -610,7 +610,7 @@ const SAVE_MONTHLY_RATE = SAVE_APY/12;
 const PRICE_OPTIONS = [
   { id:'budget',   label:'Budget laptop',   price:800,  spareCash:45, blurb:'A basic machine that gets the job done.' },
   { id:'standard', label:'Standard laptop', price:1200, spareCash:60, blurb:'A solid mid-range choice for work or school.' },
-  { id:'premium',  label:'Premium laptop',  price:2000, spareCash:85, blurb:'Top-of-the-line — more to finance, more to save for. (A bit more monthly budget comes with it too — $85/mo instead of $60.)' },
+  { id:'premium',  label:'Premium laptop',  price:2000, spareCash:85, blurb:'Top-of-the-line — more to finance, more to save for. (A bit more monthly budget comes with it too — £85/mo instead of £60.)' },
 ];
 const RATE_OPTIONS = [
   { id:'favorable', label:'Favorable rates', loanAPR:0.06, cardAPR:0.18, blurb:'Good credit, a friendly bank, a low-rate card.' },
@@ -637,7 +637,7 @@ function applyScenario(){
   JOB_LOSS_ENABLED = scenarioChoice.shock === 'on';
 
   // Both scale with laptop price so the "shape" of the card story stays
-  // comparable across tiers: a $2,000 laptop gets a bigger limit (so
+  // comparable across tiers: a £2,000 laptop gets a bigger limit (so
   // starting utilization is ~the same 40% across tiers) and a bigger
   // "pay more than the minimum" amount (so it stays proportionally
   // aggressive, not a shrinking rounding error against a larger balance).
@@ -647,7 +647,7 @@ function applyScenario(){
 
 // --- Cash-flow realism ---
 // A small existing checking-account cushion, separate from laptop savings —
-// most people aren't at exactly $0. This is what a missed payment actually
+// most people aren't at exactly £0. This is what a missed payment actually
 // erodes: once it's gone, a payment that costs more than that month's spare
 // cash genuinely cannot be made.
 const STARTING_CASH_BUFFER = 150;
@@ -948,9 +948,9 @@ function resolveDebtPayment(resolution, due, available, partialAmount){
 
   } else if(resolution === 'partial'){
     // The player chooses how much of the available cash to put toward it —
-    // anywhere from $0 up to everything on hand. Anything less than what's
+    // anywhere from £0 up to everything on hand. Anything less than what's
     // due still reports as a missed payment (same score consequence whether
-    // you pay $0 or $1 short), but the amount changes two real things: how
+    // you pay £0 or £1 short), but the amount changes two real things: how
     // much the balance actually drops, and how much cash cushion survives
     // into next month.
     const partial = Math.max(0, Math.min(available, partialAmount === undefined ? available : partialAmount));
@@ -1079,7 +1079,7 @@ function runFullSim(path, cardChoice){
 /* ---------- scenario / difficulty selection ---------- */
 
 function optionDetail(opt){
-  if(opt.price !== undefined) return `$${opt.price.toLocaleString()} · $${opt.spareCash}/mo budget`;
+  if(opt.price !== undefined) return `£${opt.price.toLocaleString()} · £${opt.spareCash}/mo budget`;
   if(opt.loanAPR !== undefined) return `Loan ${(opt.loanAPR*100).toFixed(1)}% · Card ${(opt.cardAPR*100).toFixed(1)}%`;
   return '';
 }
@@ -1564,7 +1564,7 @@ function renderPartialSlider(due, available){
       <div style="margin:16px 0 10px;">
         <input type="range" id="partial-slider" min="0" max="${available.toFixed(2)}" step="1" value="${initial}" aria-label="How much to pay toward this shortfall" aria-valuetext="${fmt(initial)}">
         <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6b6350;margin-top:4px;">
-          <span>$0 — keep all your cash</span>
+          <span>£0 — keep all your cash</span>
           <span>${fmt(available)} — keep none</span>
         </div>
       </div>
@@ -1574,7 +1574,7 @@ function renderPartialSlider(due, available){
         <div><div class="eyebrow">Cash you keep</div><div class="num" id="partial-cash-left">${fmt(available-initial)}</div></div>
       </div>
       <div class="btn-row">
-        <button class="btn ghost" id="preset-0">Pay $0</button>
+        <button class="btn ghost" id="preset-0">Pay £0</button>
         <button class="btn ghost" id="preset-half">Pay half</button>
         <button class="btn ghost" id="preset-all">Pay all ${fmt(available)}</button>
         <button class="btn" id="confirm-partial">Confirm</button>
@@ -2080,7 +2080,7 @@ function renderLesson(results){
   } else if(state.path === 'loan'){
     html += ` Your credit score ended at <b>${scoreNow}</b> (${scoreChange>=0?'+':''}${scoreChange} from where you started) — a small inquiry dip up front, recovered and then some through 24 straight on-time payments and paying the loan off in full.`;
   } else {
-    html += ` Your credit score ended at <b>${scoreNow}</b> (${scoreChange>=0?'+':''}${scoreChange}) — driven mostly by how high your balance sat relative to your $${CARD_LIMIT.toLocaleString()} limit each month. ${state.cardMonthlyChoice==='min' ? 'Minimum payments kept utilization high for most of the two years, which is the single biggest drag here.' : 'Paying more than the minimum brought utilization down faster, which is what let the score recover.'}`;
+    html += ` Your credit score ended at <b>${scoreNow}</b> (${scoreChange>=0?'+':''}${scoreChange}) — driven mostly by how high your balance sat relative to your £${CARD_LIMIT.toLocaleString()} limit each month. ${state.cardMonthlyChoice==='min' ? 'Minimum payments kept utilization high for most of the two years, which is the single biggest drag here.' : 'Paying more than the minimum brought utilization down faster, which is what let the score recover.'}`;
   }
   html += `<br><br>Across all three paths this run, <b>${PATH_META[best].name}</b> left you with the highest net worth at month 24: ${fmt(netWorth(results[best]))}.`;
   box.innerHTML = html;
@@ -2120,7 +2120,7 @@ function drawChart(results){
   ctx.stroke();
   ctx.fillStyle = '#6b6350';
   ctx.font = '11px IBM Plex Mono, monospace';
-  ctx.fillText('$0', 6, y(0)+4);
+  ctx.fillText('£0', 6, y(0)+4);
   ctx.fillText(fmt(maxV), 6, y(maxV)+4);
   ctx.fillText(fmt(minV), 6, y(minV)+4);
 
