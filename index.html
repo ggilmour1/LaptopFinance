@@ -343,11 +343,13 @@
 <body>
 <div class="wrap">
 
-  <div class="masthead">
+  <header class="masthead">
     <div class="eyebrow">A Financial Intelligence Game</div>
     <h1>The Ledger</h1>
     <p>One laptop. Three ways to pay for it. Twenty-four months to find out what it really cost you.</p>
-  </div>
+  </header>
+
+  <main>
 
   <!-- SCREEN 0: SCENARIO / DIFFICULTY -->
   <div id="screen-scenario">
@@ -392,7 +394,7 @@
     <div class="card">
       <div class="eyebrow">The Scenario <span id="scenario-recap"></span> <a href="#" id="scenario-change-link" style="font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:none;letter-spacing:0;">← change</a></div>
       <h2 id="scenario-headline" tabindex="-1">You need a £1,200 laptop.</h2>
-      <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, a small <b>£150 cushion</b> already sitting in checking, and about <b id="spare-cash-mention">£60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in pounds <i>and</i> in credit score.</p>
+      <p style="line-height:1.6;font-size:15px;">Yours just died. You need one for work or school. You have <b>no savings toward it yet</b>, a small <b>£150 cushion</b> already sitting in your current account, and about <b id="spare-cash-mention">£60/month of spare cash</b> you could put toward this if you choose to save. Pick how you'll pay for it — then live out 24 months and see what each choice actually costs, in pounds <i>and</i> in credit score.</p>
       <p style="line-height:1.6;font-size:15px;">All three paths start from the same place: a credit score of <b>700 (Good)</b>, and — if you borrow — a card limit of <b id="card-limit-mention">£3,000</b>. If a payment ever costs more than your cushion plus that month's spare cash, you'll have to decide how to cover it — <b>pay what you can, overdraft your account, or charge it to a backup card</b>. Each costs you differently.</p>
       <p id="scenario-shock-note" style="line-height:1.6;font-size:15px;display:none;background:#e8e0f5;border-left:3px solid #5b3a8a;padding:8px 12px;">⚠ This run includes a <b>job-loss shock</b>: for 2 months partway through, your spare cash drops to £0 — no matter which path you're on.</p>
     </div>
@@ -500,6 +502,8 @@
       <button class="btn ghost" id="btn-download-json">⬇ Download JSON</button>
     </div>
   </div>
+
+  </main>
 
   <footer class="note">Prototype for teaching financial intelligence · figures are illustrative, not financial advice</footer>
 </div>
@@ -646,7 +650,7 @@ function applyScenario(){
 }
 
 // --- Cash-flow realism ---
-// A small existing checking-account cushion, separate from laptop savings —
+// A small existing current-account cushion, separate from laptop savings —
 // most people aren't at exactly £0. This is what a missed payment actually
 // erodes: once it's gone, a payment that costs more than that month's spare
 // cash genuinely cannot be made.
