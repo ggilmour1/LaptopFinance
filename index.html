@@ -403,7 +403,7 @@
       <button type="button" class="path-card save" data-path="save">
         <h3>Save First</h3>
         <p id="save-blurb">Set the £60/month aside in a savings account. Buy the laptop once you've saved enough. You wait — but you earn interest, and you owe no one.</p>
-        <div class="terms" id="save-terms">Savings APY: 3.0%<br>Deposit: £60/mo<br>Laptop arrives: when funded</div>
+        <div class="terms" id="save-terms">Savings AER: 3.0%<br>Deposit: £60/mo<br>Laptop arrives: when funded</div>
       </button>
       <button type="button" class="path-card loan" data-path="loan">
         <h3>Personal Loan</h3>
@@ -607,8 +607,8 @@ let CARD_APR = 0.24;
 let CARD_MONTHLY_RATE = CARD_APR/12;
 
 // --- Savings math ---
-const SAVE_APY = 0.03;
-const SAVE_MONTHLY_RATE = SAVE_APY/12;
+const SAVE_AER = 0.03;
+const SAVE_MONTHLY_RATE = SAVE_AER/12;
 
 // --- Scenario / difficulty options ---
 const PRICE_OPTIONS = [
@@ -1346,7 +1346,7 @@ function applyScenarioTextToPickScreen(){
   document.getElementById('save-blurb').textContent =
     `Set the ${fmt(SPARE_CASH)}/month aside in a savings account. Buy the laptop once you've saved ${fmt(LAPTOP_PRICE)}. You wait — but you earn interest, and you owe no one.`;
   document.getElementById('save-terms').innerHTML =
-    `Savings APY: 3.0%<br>Deposit: ${fmt(SPARE_CASH)}/mo<br>Laptop arrives: when funded`;
+    `Savings AER: 3.0%<br>Deposit: ${fmt(SPARE_CASH)}/mo<br>Laptop arrives: when funded`;
   document.getElementById('loan-blurb').textContent =
     `Borrow ${fmt(LAPTOP_PRICE)} from the bank today, get the laptop immediately, repay in fixed monthly installments over 2 years.`;
   document.getElementById('loan-terms').innerHTML =
