@@ -2095,7 +2095,7 @@ function renderCostCompare(summaries, results){
 
   const breakdownsRow = paths.map(p => {
     const b = breakdown[p];
-    return `<div class="vbar-cell">${b.paidLabel}: ${fmt(b.paid)}<br>${b.interestLabel}: ${fmt(b.interest)}${b.outstanding > 0.005 ? `<br>${b.outstandingLabel}: ${fmt(b.outstanding)}` : ''}</div>`;
+    return `<div class="vbar-cell">${b.paidLabel}: ${fmt(b.paid)}<br>${b.interestLabel}: ${fmt(b.interest)}${b.outstanding > 0.005 ? `<br><span style="color:var(--stamp);font-weight:700;">${b.outstandingLabel}: ${fmt(b.outstanding)}</span>` : ''}</div>`;
   }).join('');
 
   const callout = `<p style="font-size:13px;color:#4b4636;margin:14px 0 0;line-height:1.6;">
@@ -2142,7 +2142,7 @@ function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId,
       <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?sum.interestEarned:sum.interestPaid)}</span></div>
       ${p!=='save' && sum.lateFees>0 ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(sum.lateFees)}</span></div>` : ''}
       ${p!=='save' && sum.overdraftFees>0 ? `<div class="row"><span>Overdraft fees charged</span><span class="v">${fmt(sum.overdraftFees)}</span></div>` : ''}
-      <div class="row"><span>Debt remaining, mo. 24</span><span class="v">${fmt(totalDebt)}</span></div>
+      <div class="row"><span${totalDebt>0.5?' style="color:var(--stamp);font-weight:700;"':''}>Debt remaining, mo. 24</span><span class="v"${totalDebt>0.5?' style="color:var(--stamp);font-weight:800;font-size:15px;"':''}>${fmt(totalDebt)}</span></div>
       ${p!=='save' && sum.backupCardDebt>0.5 ? `<div class="row"><span>— of which, backup card</span><span class="v">${fmt(sum.backupCardDebt)}</span></div>` : ''}
       <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(sum.cashPlusSavings)}</span></div>
       <div class="row"><span>Net worth, mo. 24</span><span class="v">${fmt(sum.netWorth)}</span></div>
