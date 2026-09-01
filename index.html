@@ -2130,31 +2130,54 @@ function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId,
   const hTag = 'h' + (headingLevel || 3);
   container.innerHTML = '';
   ['save','loan','card'].forEach(p=>{
-    const sum = summaries[p];
-    const band = scoreBand(sum.creditScore);
-    const scoreChange = sum.creditScoreChange;
-    const totalDebt = sum.debtRemaining + (sum.backupCardDebt||0);
+    const isChosenPath = p === chosenPathId;
     const col = document.createElement('div');
-    col.className = 'col ' + p + (p===chosenPathId ? ' chosen':'');
-    col.innerHTML = `
-      <${hTag} class="col-heading">${sum.pathName}${p===chosenPathId?' · played this run':''}</${hTag}>
+    col.className = 'col ' + p + (isChosenPath ? ' chosen':'');
+    col.innerHTML = buildCompareColumnHtml(summaries[p], p, isChosenPath, hTag);
+    container.appendChild(col);
+  });
+}
+
+// One column's worth of rows — pulled out of the forEach above so its many
+// "only show this row if it's relevant to this path" conditionals don't
+// stack cognitive complexity on top of the loop they'd otherwise be nested
+// inside.
+function buildCompareColumnHtml(sum, p, isChosenPath, hTag){
+  const band = scoreBand(sum.creditScore);
+  const scoreChange = sum.creditScoreChange;
+  const totalDebt = sum.debtRemaining + (sum.backupCardDebt||0);
+  const isDebtPath = p !== 'save';
+  const debtStandsOut = totalDebt > 0.5;
+
+  const lateFeesRow = isDebtPath && sum.lateFees > 0
+    ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(sum.lateFees)}</span></div>` : '';
+  const overdraftFeesRow = isDebtPath && sum.overdraftFees > 0
+    ? `<div class="row"><span>Overdraft fees charged</span><span class="v">${fmt(sum.overdraftFees)}</span></div>` : '';
+  const backupCardRow = isDebtPath && sum.backupCardDebt > 0.5
+    ? `<div class="row"><span>— of which, backup card</span><span class="v">${fmt(sum.backupCardDebt)}</span></div>` : '';
+  const missedColor = sum.missedOrPartialPayments > 0 ? '#A63D40' : 'inherit';
+  const missedRow = isDebtPath
+    ? `<div class="row"><span>Payments missed/partial</span><span class="v" style="color:${missedColor};">${sum.missedOrPartialPayments}</span></div>` : '';
+  const debtLabelStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:700;"' : '';
+  const debtValueStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:800;font-size:15px;"' : '';
+
+  return `
+      <${hTag} class="col-heading">${sum.pathName}${isChosenPath?' · played this run':''}</${hTag}>
       <div class="row"><span>What your laptop really cost you</span><span class="v">${fmt(sum.totalPaid)}</span></div>
       <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?sum.interestEarned:sum.interestPaid)}</span></div>
-      ${p!=='save' && sum.lateFees>0 ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(sum.lateFees)}</span></div>` : ''}
-      ${p!=='save' && sum.overdraftFees>0 ? `<div class="row"><span>Overdraft fees charged</span><span class="v">${fmt(sum.overdraftFees)}</span></div>` : ''}
-      <div class="row"><span${totalDebt>0.5?' style="color:var(--stamp);font-weight:700;"':''}>Debt remaining, mo. 24</span><span class="v"${totalDebt>0.5?' style="color:var(--stamp);font-weight:800;font-size:15px;"':''}>${fmt(totalDebt)}</span></div>
-      ${p!=='save' && sum.backupCardDebt>0.5 ? `<div class="row"><span>— of which, backup card</span><span class="v">${fmt(sum.backupCardDebt)}</span></div>` : ''}
+      ${lateFeesRow}
+      ${overdraftFeesRow}
+      <div class="row"><span${debtLabelStyle}>Debt remaining, mo. 24</span><span class="v"${debtValueStyle}>${fmt(totalDebt)}</span></div>
+      ${backupCardRow}
       <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(sum.cashPlusSavings)}</span></div>
       <div class="row"><span>Net worth, mo. 24</span><span class="v">${fmt(sum.netWorth)}</span></div>
-      ${p!=='save' ? `<div class="row"><span>Payments missed/partial</span><span class="v" style="color:${sum.missedOrPartialPayments>0?'#A63D40':'inherit'};">${sum.missedOrPartialPayments}</span></div>` : ''}
+      ${missedRow}
       <div class="row" style="border-bottom:none;font-weight:600;">
         <span>Credit score, mo. 24</span>
         <span class="v">${sum.creditScore} <span class="score-pill" style="background:${band.color};">${band.label}</span>
         <span style="font-weight:400;color:${scoreChange>=0?'#2F6F4E':'#A63D40'};">${scoreChange>=0?'+':''}${scoreChange}</span></span>
       </div>
     `;
-    container.appendChild(col);
-  });
 }
 
 function bar(labelText, pct, color, note){
