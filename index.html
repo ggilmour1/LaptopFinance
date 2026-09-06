@@ -594,6 +594,7 @@ function initState(path){
     savings: 0,
     debt: path === 'loan' ? LAPTOP_PRICE : (path === 'card' ? LAPTOP_PRICE : 0),
     laptopOwned: path !== 'save',
+    laptopBoughtMonth: path === 'save' ? null : 0,
     totalInterestPaid: 0,
     totalInterestEarned: 0,
     totalLateFees: 0,
@@ -924,6 +925,7 @@ function simulateMonthSave(){
   if(!state.laptopOwned && state.savings >= LAPTOP_PRICE){
     state.savings -= LAPTOP_PRICE;
     state.laptopOwned = true;
+    state.laptopBoughtMonth = state.month;
     addRow({month:state.month, label:'★ Bought the laptop, in full', amount: -LAPTOP_PRICE, balance: state.savings});
   }
   updateCreditScoreForMonth(state);
@@ -1779,6 +1781,8 @@ function buildPathSummary(p, results){
     creditScoreChange: displayScore(s) - STARTING_SCORE,
     missedOrPartialPayments: s.scoreFactors.missedPayments,
     laptopOwned: s.laptopOwned,
+    laptopBoughtMonth: p === 'save' ? s.laptopBoughtMonth : undefined,
+    stillShortBy: p === 'save' && !s.laptopOwned ? Math.round(Math.max(0, LAPTOP_PRICE - s.savings) * 100) / 100 : 0,
     cardStrategy,
     payoffMonths: cardPayoff ? cardPayoff.months : undefined,
     payoffExtraInterest: cardPayoff ? cardPayoff.extraInterest : undefined,
@@ -2186,6 +2190,23 @@ function buildCompareColumnHtml(sum, p, isChosenPath, hTag){
     ? `<div class="row"><span>Payments missed/partial</span><span class="v" style="color:${missedColor};">${sum.missedOrPartialPayments}</span></div>` : '';
   const debtLabelStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:700;"' : '';
   const debtValueStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:800;font-size:15px;"' : '';
+
+  // For Save First, "Debt remaining" is always a meaningless £0.00 — that
+  // slot in the table instead shows the one thing unique to this path: which
+  // month the laptop actually got bought, or (same red/bold treatment as an
+  // outstanding balance elsewhere) how much you're still short if it never
+  // did within the 24 months.
+  let secondStatRow;
+  if(p === 'save'){
+    if(sum.laptopOwned){
+      secondStatRow = `<div class="row"><span>Laptop bought</span><span class="v">Month ${sum.laptopBoughtMonth}</span></div>`;
+    } else {
+      secondStatRow = `<div class="row"><span style="color:var(--stamp);font-weight:700;">Laptop bought</span><span class="v" style="color:var(--stamp);font-weight:800;font-size:15px;">Not yet — ${fmt(sum.stillShortBy)} short</span></div>`;
+    }
+  } else {
+    secondStatRow = `<div class="row"><span${debtLabelStyle}>Debt remaining, mo. 24</span><span class="v"${debtValueStyle}>${fmt(totalDebt)}</span></div>`;
+  }
+
   let payoffNote = '';
   if(p === 'card' && sum.payoffMonths){
     if(sum.payoffCapped){
@@ -2202,7 +2223,7 @@ function buildCompareColumnHtml(sum, p, isChosenPath, hTag){
       <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?sum.interestEarned:sum.interestPaid)}</span></div>
       ${lateFeesRow}
       ${overdraftFeesRow}
-      <div class="row"><span${debtLabelStyle}>Debt remaining, mo. 24</span><span class="v"${debtValueStyle}>${fmt(totalDebt)}</span></div>
+      ${secondStatRow}
       ${backupCardRow}
       ${payoffNote}
       <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(sum.cashPlusSavings)}</span></div>
@@ -2312,12 +2333,15 @@ function drawChart(results){
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0,0,w,h);
 
+  const saveBoughtNote = results.save.laptopOwned
+    ? ` Save First fully saved the cash price and bought the laptop in month ${results.save.laptopBoughtMonth}.`
+    : ` Save First had not fully saved the laptop's cash price by month ${MONTHS}.`;
   canvas.setAttribute('role', 'img');
   canvas.setAttribute('aria-label', `Net worth over ${MONTHS} months. Final net worth — ` +
     ['save','loan','card'].map(p => {
       const hist = results[p].history;
       return `${PATH_META[p].name}: ${fmt(hist[hist.length-1].netWorth)}`;
-    }).join(', ') + '. See the comparison table below for full figures.');
+    }).join(', ') + '.' + saveBoughtNote + ' See the comparison table below for full figures.');
 
   const allVals = [];
   ['save','loan','card'].forEach(p=> results[p].history.forEach(pt=>allVals.push(pt.netWorth)));
@@ -2355,6 +2379,40 @@ function drawChart(results){
     ctx.stroke();
   });
   ctx.globalAlpha = 1;
+
+  // Mark the exact month the laptop was actually bought while saving — the
+  // save line bends here (a lump sum leaves savings for the purchase), so
+  // calling out the month directly beats making someone trace pixels to
+  // guess it. Only drawn once the cash price was actually fully saved up.
+  const boughtMonth = results.save.laptopBoughtMonth;
+  const boughtPoint = boughtMonth != null ? results.save.history.find(pt => pt.month === boughtMonth) : null;
+  if(results.save.laptopOwned && boughtPoint){
+    const bx = x(boughtMonth), by = y(boughtPoint.netWorth);
+    ctx.globalAlpha = state.path === 'save' ? 1 : 0.55;
+
+    ctx.strokeStyle = '#c9bfa1';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    ctx.moveTo(bx, pad.t);
+    ctx.lineTo(bx, h - pad.b);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = PATH_META.save.color;
+    ctx.beginPath();
+    ctx.arc(bx, by, 4, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.font = 'bold 11px IBM Plex Mono, monospace';
+    const label = `Saved & bought · mo. ${boughtMonth}`;
+    const labelW = ctx.measureText(label).width;
+    // Keep the label inside the plot area — flip it to the left of the
+    // guide line if it would otherwise run off the right edge.
+    const labelX = Math.min(bx + 6, w - pad.r - labelW);
+    ctx.fillText(label, labelX, pad.t + 10);
+    ctx.globalAlpha = 1;
+  }
 
   // x axis labels
   ctx.fillStyle = '#6b6350';
