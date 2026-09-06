@@ -1730,12 +1730,38 @@ document.getElementById('btn-change-scenario').addEventListener('click', ()=>{
 // Structured per-path summary — the single source of truth both the
 // plain-text export and the JSON export pull from, so they can't drift out
 // of sync with each other (or with what renderCompare shows on screen).
+// Projects how much longer a remaining Credit Card balance would take to
+// clear — and how much more interest it would rack up — if the same
+// monthly payment strategy just kept going past month 24, using the exact
+// interest-then-payment formula the live sim uses each month (see
+// beginMonthCard), applied in isolation with no further life events or
+// shortfalls assumed. The month cap is a safety net against an infinite
+// loop (a minimum payment that doesn't cover the month's interest would
+// never converge), not something today's rate range is expected to hit.
+const CARD_PAYOFF_PROJECTION_CAP_MONTHS = 600;
+function projectCardPayoff(startDebt, choice){
+  let debt = startDebt;
+  let months = 0;
+  let extraInterest = 0;
+  while(debt > 0.01 && months < CARD_PAYOFF_PROJECTION_CAP_MONTHS){
+    const interest = debt * CARD_MONTHLY_RATE;
+    debt += interest;
+    extraInterest += interest;
+    const due = Math.min(choice === 'min' ? Math.max(25, debt * 0.03) : FIXED_CARD_PAYMENT, debt);
+    debt -= due;
+    months++;
+  }
+  return { months, extraInterest: Math.round(extraInterest * 100) / 100, capped: debt > 0.01 };
+}
+
 function buildPathSummary(p, results){
   const s = results[p];
   const nw = netWorth(s);
   const totalPaid = p === 'save'
     ? results.scenario.laptopPrice - s.totalInterestEarned
     : results.scenario.laptopPrice + s.totalInterestPaid + s.totalLateFees + (s.totalOverdraftFees||0);
+  const cardStrategy = p === 'card' ? s.cardMonthlyChoice : undefined;
+  const cardPayoff = (p === 'card' && s.debt > 0.5) ? projectCardPayoff(s.debt, cardStrategy) : null;
   return {
     pathId: p,
     pathName: PATH_META[p].name,
@@ -1753,7 +1779,10 @@ function buildPathSummary(p, results){
     creditScoreChange: displayScore(s) - STARTING_SCORE,
     missedOrPartialPayments: s.scoreFactors.missedPayments,
     laptopOwned: s.laptopOwned,
-    cardStrategy: p === 'card' ? s.cardMonthlyChoice : undefined,
+    cardStrategy,
+    payoffMonths: cardPayoff ? cardPayoff.months : undefined,
+    payoffExtraInterest: cardPayoff ? cardPayoff.extraInterest : undefined,
+    payoffCapped: cardPayoff ? cardPayoff.capped : undefined,
   };
 }
 
@@ -2157,6 +2186,15 @@ function buildCompareColumnHtml(sum, p, isChosenPath, hTag){
     ? `<div class="row"><span>Payments missed/partial</span><span class="v" style="color:${missedColor};">${sum.missedOrPartialPayments}</span></div>` : '';
   const debtLabelStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:700;"' : '';
   const debtValueStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:800;font-size:15px;"' : '';
+  let payoffNote = '';
+  if(p === 'card' && sum.payoffMonths){
+    if(sum.payoffCapped){
+      payoffNote = `<div class="ladder-note">At this payment rate, the balance would take decades to clear — the payments barely outpace the interest.</div>`;
+    } else {
+      const monthWord = sum.payoffMonths === 1 ? 'month' : 'months';
+      payoffNote = `<div class="ladder-note">At this payment rate, clearing the rest would take about <b style="color:var(--stamp);">${sum.payoffMonths} more ${monthWord}</b> — roughly <b style="color:var(--stamp);">${fmt(sum.payoffExtraInterest)}</b> more in interest.</div>`;
+    }
+  }
 
   return `
       <${hTag} class="col-heading">${sum.pathName}${isChosenPath?' · played this run':''}</${hTag}>
@@ -2166,6 +2204,7 @@ function buildCompareColumnHtml(sum, p, isChosenPath, hTag){
       ${overdraftFeesRow}
       <div class="row"><span${debtLabelStyle}>Debt remaining, mo. 24</span><span class="v"${debtValueStyle}>${fmt(totalDebt)}</span></div>
       ${backupCardRow}
+      ${payoffNote}
       <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(sum.cashPlusSavings)}</span></div>
       <div class="row"><span>Net worth, mo. 24</span><span class="v">${fmt(sum.netWorth)}</span></div>
       ${missedRow}
