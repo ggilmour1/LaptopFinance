@@ -962,13 +962,39 @@ function beginMonthCard(choiceOverride){
 // This is shared by both loan and card months — the shortfall-handling choice
 // works the same way regardless of which kind of debt it is.
 
+// Applies `amount` toward the debt: for a loan, splits it into the interest
+// already accrued this month (tracked, not reducing the balance further)
+// and whatever's left going to principal; for a card, the whole amount just
+// comes off the balance directly. Shared by the 'full', 'overdraft', and
+// 'card' resolutions below, which all pay the full `due` amount and only
+// differ in where the cash for it comes from.
+function applyPrincipalPayment(s, amount, interestPortion){
+  if(s.path === 'loan'){
+    const principal = Math.min(amount - interestPortion, s.debt);
+    s.debt -= principal;
+    s.totalInterestPaid += interestPortion;
+  } else {
+    s.debt -= amount;
+  }
+}
+
+// The one-time -8 score hit for opening a backup card only ever applies the
+// first time it happens, whether that's triggered by an overdraft shortfall,
+// a monthly payment shortfall, or a life event with no cash cushion to cover
+// it — so all three call the same guarded mutation instead of repeating it.
+function openBackupCardIfNeeded(s, reason){
+  if(s.scoreFactors.backupCardOpened) return;
+  s.scoreFactors.backupCardOpened = true;
+  applyScoreChange(s, -8, reason, true);
+}
+
 function resolveDebtPayment(resolution, due, available, partialAmount){
   const s = state;
-  const label = s.path === 'loan' ? 'Loan payment' : (s.cardMonthlyChoice === 'min' ? 'Minimum payment' : `Fixed payment (${fmt(FIXED_CARD_PAYMENT)})`);
-  let interestPortion = 0, principalPortion = due;
+  const cardPaymentLabel = s.cardMonthlyChoice === 'min' ? 'Minimum payment' : `Fixed payment (${fmt(FIXED_CARD_PAYMENT)})`;
+  const label = s.path === 'loan' ? 'Loan payment' : cardPaymentLabel;
+  let interestPortion = 0;
   if(s.path === 'loan' && due > 0){
     interestPortion = s.debt * LOAN_MONTHLY_RATE;
-    principalPortion = due; // (due already sized to cover interest + principal, or full payoff)
   }
 
   if(due <= 0.01){
@@ -977,13 +1003,7 @@ function resolveDebtPayment(resolution, due, available, partialAmount){
   }
 
   if(resolution === 'full'){
-    if(s.path === 'loan'){
-      const principal = Math.min(due - interestPortion, s.debt);
-      s.debt -= principal;
-      s.totalInterestPaid += interestPortion;
-    } else {
-      s.debt -= due;
-    }
+    applyPrincipalPayment(s, due, interestPortion);
     s.cash = available - due;
     addRow({month:s.month, label, amount:-due, balance:s.debt});
     if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
@@ -997,8 +1017,6 @@ function resolveDebtPayment(resolution, due, available, partialAmount){
     // into next month.
     const partial = Math.max(0, Math.min(available, partialAmount === undefined ? available : partialAmount));
     if(s.path === 'loan'){
-      const interestCovered = Math.min(partial, interestPortion);
-      const principal = Math.max(0, partial - interestCovered);
       s.debt = s.debt + interestPortion - partial; // accrue interest, subtract whatever was paid
       s.totalInterestPaid += interestPortion;
     } else {
@@ -1022,13 +1040,7 @@ function resolveDebtPayment(resolution, due, available, partialAmount){
     // shortfall-handling applyEventsAndScoring() already uses for EVENTS —
     // rather than letting cash spiral arbitrarily negative and re-trigger a
     // fresh overdraft fee every subsequent month with no way to recover.
-    if(s.path === 'loan'){
-      const principal = Math.min(due - interestPortion, s.debt);
-      s.debt -= principal;
-      s.totalInterestPaid += interestPortion;
-    } else {
-      s.debt -= due;
-    }
+    applyPrincipalPayment(s, due, interestPortion);
     const cashAfter = available - due - OVERDRAFT_FEE;
     s.totalOverdraftFees += OVERDRAFT_FEE;
     addRow({month:s.month, label:`${label} (paid in full)`, amount:-due, balance:s.debt});
@@ -1040,10 +1052,7 @@ function resolveDebtPayment(resolution, due, available, partialAmount){
         s.debt += shortfall;
         addRow({month:s.month, label:'Overdraft shortfall — no cash cushion, charged to card', amount:-shortfall, balance:s.debt});
       } else {
-        if(!s.scoreFactors.backupCardOpened){
-          s.scoreFactors.backupCardOpened = true;
-          applyScoreChange(s, -8, 'backup card opened to cover an overdraft shortfall', true);
-        }
+        openBackupCardIfNeeded(s, 'backup card opened to cover an overdraft shortfall');
         s.backupCardDebt = (s.backupCardDebt||0) + shortfall;
         addRow({month:s.month, label:'Overdraft shortfall — no cash cushion, charged to backup card', amount:-shortfall, balance:s.backupCardDebt});
       }
@@ -1056,19 +1065,10 @@ function resolveDebtPayment(resolution, due, available, partialAmount){
     // Paid in full and on time — just funded by a backup credit card instead
     // of cash. The original account looks clean; the cost moves to a new,
     // higher-rate balance that keeps compounding for the rest of the game.
-    if(s.path === 'loan'){
-      const principal = Math.min(due - interestPortion, s.debt);
-      s.debt -= principal;
-      s.totalInterestPaid += interestPortion;
-    } else {
-      s.debt -= due;
-    }
+    applyPrincipalPayment(s, due, interestPortion);
     s.backupCardDebt = (s.backupCardDebt||0) + due;
     s.cash = available;
-    if(!s.scoreFactors.backupCardOpened){
-      s.scoreFactors.backupCardOpened = true;
-      applyScoreChange(s, -8, 'backup card opened to cover a payment', true);
-    }
+    openBackupCardIfNeeded(s, 'backup card opened to cover a payment');
     addRow({month:s.month, label:`${label} — covered by a backup credit card`, amount:-due, balance:s.debt});
     if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
   }
@@ -1088,10 +1088,7 @@ function applyEventsAndScoring(){
         state.debt += shortfall;
         addRow({month:state.month, label: ev.label + ' — no cash cushion, charged to card', amount: ev.amount, balance: state.debt, isEvent:true});
       } else {
-        if(!state.scoreFactors.backupCardOpened){
-          state.scoreFactors.backupCardOpened = true;
-          applyScoreChange(state, -8, 'backup card opened to cover an expense', true);
-        }
+        openBackupCardIfNeeded(state, 'backup card opened to cover an expense');
         state.backupCardDebt = (state.backupCardDebt||0) + shortfall;
         addRow({month:state.month, label: ev.label + ' — no cash cushion, charged to backup card', amount: ev.amount, balance: state.backupCardDebt, isEvent:true});
       }
