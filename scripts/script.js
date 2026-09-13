@@ -52,12 +52,15 @@ function fmt(n){
 }
 
 function initState(path){
+  // Loan and card both disburse/charge the full price on day one; only
+  // saving starts from zero and builds toward it.
+  const startingDebt = path === 'save' ? 0 : LAPTOP_PRICE;
   return {
     path,
     month: 0,
     cash: STARTING_CASH_BUFFER,
     savings: 0,
-    debt: path === 'loan' ? LAPTOP_PRICE : (path === 'card' ? LAPTOP_PRICE : 0),
+    debt: startingDebt,
     laptopOwned: path !== 'save',
     laptopBoughtMonth: path === 'save' ? null : 0,
     totalInterestPaid: 0,
@@ -214,6 +217,56 @@ function missedPaymentPenalty(streak){
   return -20;
 }
 
+// Loan and card both open a new account in month 1 — that's a hard inquiry
+// and it dings the score a little, on purpose, regardless of how responsible
+// you are afterwards.
+function applyHardInquiryIfNeeded(s, f){
+  if(s.month === 1 && !f.hardInquiryApplied){
+    f.hardInquiryApplied = true;
+    applyScoreChange(s, -8, 'hard inquiry, new account opened', true);
+  }
+}
+
+// Shared by the missed-payment and on-time branches below — whichever one
+// runs this month, a freshly-cleared balance still earns the same one-time
+// bonus the moment it happens.
+function applyDebtClearedBonusIfNeeded(s, f){
+  if((s.path==='loan' || s.path==='card') && s.debt <= 0.01 && !f.debtClearedBonusGiven){
+    f.debtClearedBonusGiven = true;
+    applyScoreChange(s, 15, 'account paid in full', true);
+  }
+}
+
+function applyMissedPaymentPenalty(s, f){
+  f.paymentTotalMonths++;
+  const penalty = missedPaymentPenalty(f.missedStreak);
+  const ordinal = ordinalOf(f.missedStreak);
+  applyScoreChange(s, penalty, `payment missed (${ordinal} in a row)`, true);
+}
+
+function applyOnTimeLoanPayment(s, f, dampen){
+  f.paymentTotalMonths++;
+  f.paymentOnTimeMonths++;
+  let delta = 2 * dampen;
+  if(f.hasDelinquencyMark) delta *= 0.5; // a past miss keeps weighing on the file
+  applyScoreChange(s, delta, 'on-time installment payment', false);
+}
+
+// Utilization is the other big lever on a revolving account: how much of
+// the card's limit the balance eats up, month over month. This is what
+// actually differs between "pay the minimum" and "pay more than the
+// minimum" — right up until cash can't cover the payment at all.
+function applyOnTimeCardPayment(s, f, dampen){
+  f.paymentTotalMonths++;
+  f.paymentOnTimeMonths++;
+  const util = Math.max(0, s.debt) / CARD_LIMIT;
+  f.utilizationSum += util;
+  f.utilizationCount++;
+  let delta = utilizationDelta(util) * dampen;
+  if(f.hasDelinquencyMark && delta > 0) delta *= 0.5; // a past miss keeps weighing on the file
+  applyScoreChange(s, delta, util > 0.5 ? 'high utilization' : 'utilization in check', false);
+}
+
 function updateCreditScoreForMonth(s){
   const f = s.scoreFactors;
 
@@ -224,77 +277,68 @@ function updateCreditScoreForMonth(s){
     return;
   }
 
-  // Loan and card both open a new account in month 1 — that's a hard inquiry
-  // and it dings the score a little, on purpose, regardless of how responsible
-  // you are afterwards.
-  if(s.month === 1 && !f.hardInquiryApplied){
-    f.hardInquiryApplied = true;
-    applyScoreChange(s, -8, 'hard inquiry, new account opened', true);
-  }
+  applyHardInquiryIfNeeded(s, f);
 
   // New accounts have a short, thin credit history — upward movement is capped
   // for the first several months even with perfect behavior.
   const dampen = s.month <= NEW_ACCOUNT_MONTHS ? 0.5 : 1;
 
   if(s._missedThisMonth){
-    f.paymentTotalMonths++;
-    const penalty = missedPaymentPenalty(f.missedStreak);
-    const ordinal = ordinalOf(f.missedStreak);
-    applyScoreChange(s, penalty, `payment missed (${ordinal} in a row)`, true);
     // The miss dominates this month — no utilization/on-time credit on top of it.
-    if((s.path==='loan' || s.path==='card') && s.debt <= 0.01 && !f.debtClearedBonusGiven){
-      f.debtClearedBonusGiven = true;
-      applyScoreChange(s, 15, 'account paid in full', true);
-    }
+    applyMissedPaymentPenalty(s, f);
+    applyDebtClearedBonusIfNeeded(s, f);
     return;
   }
 
-  if(s.path === 'loan'){
-    f.paymentTotalMonths++;
-    f.paymentOnTimeMonths++;
-    let delta = 2 * dampen;
-    if(f.hasDelinquencyMark) delta *= 0.5; // a past miss keeps weighing on the file
-    applyScoreChange(s, delta, 'on-time installment payment', false);
-  }
+  if(s.path === 'loan') applyOnTimeLoanPayment(s, f, dampen);
+  if(s.path === 'card') applyOnTimeCardPayment(s, f, dampen);
 
-  if(s.path === 'card'){
-    // Utilization is the other big lever on a revolving account: how much of
-    // the card's limit the balance eats up, month over month. This is what
-    // actually differs between "pay the minimum" and "pay more than the
-    // minimum" — right up until cash can't cover the payment at all.
-    f.paymentTotalMonths++;
-    f.paymentOnTimeMonths++;
-    const util = Math.max(0, s.debt) / CARD_LIMIT;
-    f.utilizationSum += util;
-    f.utilizationCount++;
-    let delta = utilizationDelta(util) * dampen;
-    if(f.hasDelinquencyMark && delta > 0) delta *= 0.5; // a past miss keeps weighing on the file
-    applyScoreChange(s, delta, util > 0.5 ? 'high utilization' : 'utilization in check', false);
-  }
+  applyDebtClearedBonusIfNeeded(s, f);
+}
 
-  if((s.path==='loan' || s.path==='card') && s.debt <= 0.01 && !f.debtClearedBonusGiven){
-    f.debtClearedBonusGiven = true;
-    applyScoreChange(s, 15, 'account paid in full', true);
-  }
+function rowClassNames(row){
+  const classes = [];
+  if(row.isEvent) classes.push('event');
+  if(row.isMissed) classes.push('missed');
+  if(row.isShock) classes.push('shock');
+  return classes;
+}
+
+function rowAmountClass(row){
+  if(row.amount > 0) return 'amt-pos';
+  if(row.amount < 0) return 'amt-neg';
+  return '';
+}
+
+function formatRowAmount(row){
+  if(row.amount === null || row.amount === undefined) return '';
+  if(row.isScore) return `${row.amount>0?'+':''}${row.amount} pts`;
+  return fmt(row.amount);
+}
+
+function formatRowBalance(row){
+  if(row.isScore) return `${row.balance} pts`;
+  if(row.balance === null || row.balance === undefined) return '';
+  return fmt(row.balance);
+}
+
+// Only one badge shows at a time — missed takes priority over a job-loss
+// shock, which takes priority over a plain life event.
+function rowBadge(row){
+  if(row.isMissed) return ' <span class="stamp-badge missed-badge">missed</span>';
+  if(row.isShock) return ' <span class="stamp-badge shock-badge">job loss</span>';
+  if(row.isEvent) return ' <span class="stamp-badge">event</span>';
+  return '';
 }
 
 function addRow(row){
   state.ledgerRows.push(row);
   const tbody = document.getElementById('ledger-body');
   const tr = document.createElement('tr');
-  if(row.isEvent) tr.classList.add('event');
-  if(row.isMissed) tr.classList.add('missed');
-  if(row.isShock) tr.classList.add('shock');
-  const amtClass = row.amount > 0 ? 'amt-pos' : (row.amount < 0 ? 'amt-neg' : '');
-  let amountDisplay = '';
-  if(row.amount !== null && row.amount !== undefined){
-    amountDisplay = row.isScore ? `${row.amount>0?'+':''}${row.amount} pts` : fmt(row.amount);
-  }
-  const balanceDisplay = row.isScore ? `${row.balance} pts` : (row.balance === null || row.balance === undefined ? '' : fmt(row.balance));
-  const badge = row.isMissed ? ' <span class="stamp-badge missed-badge">missed</span>' : (row.isShock ? ' <span class="stamp-badge shock-badge">job loss</span>' : (row.isEvent ? ' <span class="stamp-badge">event</span>' : ''));
-  tr.innerHTML = `<td>${row.month}</td><td>${row.label}${badge}</td>
-    <td style="text-align:right;" class="${amtClass}">${amountDisplay}</td>
-    <td style="text-align:right;">${balanceDisplay}</td>`;
+  tr.classList.add(...rowClassNames(row));
+  tr.innerHTML = `<td>${row.month}</td><td>${row.label}${rowBadge(row)}</td>
+    <td style="text-align:right;" class="${rowAmountClass(row)}">${formatRowAmount(row)}</td>
+    <td style="text-align:right;">${formatRowBalance(row)}</td>`;
   tbody.appendChild(tr);
   const scroller = document.querySelector('.ledger-scroll');
   scroller.scrollTop = scroller.scrollHeight;
@@ -455,6 +499,79 @@ function openBackupCardIfNeeded(s, reason){
   applyScoreChange(s, -8, reason, true);
 }
 
+function resolvePaymentFull(s, due, available, label, interestPortion){
+  applyPrincipalPayment(s, due, interestPortion);
+  s.cash = available - due;
+  addRow({month:s.month, label, amount:-due, balance:s.debt});
+  if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
+}
+
+// The player chooses how much of the available cash to put toward it —
+// anywhere from £0 up to everything on hand. Anything less than what's due
+// still reports as a missed payment (same score consequence whether you pay
+// £0 or £1 short), but the amount changes two real things: how much the
+// balance actually drops, and how much cash cushion survives into next month.
+function resolvePaymentPartial(s, due, available, partialAmount, interestPortion){
+  const partial = Math.max(0, Math.min(available, partialAmount === undefined ? available : partialAmount));
+  if(s.path === 'loan'){
+    s.debt = s.debt + interestPortion - partial; // accrue interest, subtract whatever was paid
+    s.totalInterestPaid += interestPortion;
+  } else {
+    s.debt -= partial;
+  }
+  s.cash = available - partial;
+  addRow({month:s.month, label:`Partial payment — paid ${fmt(partial)} of ${fmt(due)} due`, amount:-partial, balance:s.debt, isMissed:true});
+  s.debt += LATE_FEE;
+  s.totalLateFees += LATE_FEE;
+  addRow({month:s.month, label:'Late fee — below the amount due', amount:LATE_FEE, balance:s.debt, isMissed:true});
+  s.scoreFactors.missedStreak++;
+  s.scoreFactors.missedPayments++;
+  s.scoreFactors.hasDelinquencyMark = true;
+  s._missedThisMonth = true;
+}
+
+// Paid in full and on time — the bank covers the gap. Overdrafts aren't
+// reported to credit bureaus, so there's no score hit, just a fee. If cash
+// can't absorb the payment plus that fee, this floors cash at £0 and moves
+// the remainder onto revolving debt instead — the same shortfall-handling
+// applyEventsAndScoring() already uses for EVENTS — rather than letting cash
+// spiral arbitrarily negative and re-trigger a fresh overdraft fee every
+// subsequent month with no way to recover.
+function resolvePaymentOverdraft(s, due, available, label, interestPortion){
+  applyPrincipalPayment(s, due, interestPortion);
+  const cashAfter = available - due - OVERDRAFT_FEE;
+  s.totalOverdraftFees += OVERDRAFT_FEE;
+  addRow({month:s.month, label:`${label} (paid in full)`, amount:-due, balance:s.debt});
+  addRow({month:s.month, label:'Overdraft fee', amount:OVERDRAFT_FEE, balance:Math.max(0, cashAfter)});
+  if(cashAfter < 0){
+    const shortfall = -cashAfter;
+    s.cash = 0;
+    if(s.path === 'card'){
+      s.debt += shortfall;
+      addRow({month:s.month, label:'Overdraft shortfall — no cash cushion, charged to card', amount:-shortfall, balance:s.debt});
+    } else {
+      openBackupCardIfNeeded(s, 'backup card opened to cover an overdraft shortfall');
+      s.backupCardDebt = (s.backupCardDebt||0) + shortfall;
+      addRow({month:s.month, label:'Overdraft shortfall — no cash cushion, charged to backup card', amount:-shortfall, balance:s.backupCardDebt});
+    }
+  } else {
+    s.cash = cashAfter;
+  }
+  if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
+}
+
+// Paid in full and on time — just funded by a backup credit card instead of
+// cash. The original account looks clean; the cost moves to a new,
+// higher-rate balance that keeps compounding for the rest of the game.
+function resolvePaymentViaBackupCard(s, due, available, label, interestPortion){
+  applyPrincipalPayment(s, due, interestPortion);
+  s.backupCardDebt = (s.backupCardDebt||0) + due;
+  s.cash = available;
+  openBackupCardIfNeeded(s, 'backup card opened to cover a payment');
+  addRow({month:s.month, label:`${label} — covered by a backup credit card`, amount:-due, balance:s.debt});
+  if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
+}
+
 function resolveDebtPayment(resolution, due, available, partialAmount){
   const s = state;
   const cardPaymentLabel = s.cardMonthlyChoice === 'min' ? 'Minimum payment' : `Fixed payment (${fmt(FIXED_CARD_PAYMENT)})`;
@@ -469,76 +586,10 @@ function resolveDebtPayment(resolution, due, available, partialAmount){
     return;
   }
 
-  if(resolution === 'full'){
-    applyPrincipalPayment(s, due, interestPortion);
-    s.cash = available - due;
-    addRow({month:s.month, label, amount:-due, balance:s.debt});
-    if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
-
-  } else if(resolution === 'partial'){
-    // The player chooses how much of the available cash to put toward it —
-    // anywhere from £0 up to everything on hand. Anything less than what's
-    // due still reports as a missed payment (same score consequence whether
-    // you pay £0 or £1 short), but the amount changes two real things: how
-    // much the balance actually drops, and how much cash cushion survives
-    // into next month.
-    const partial = Math.max(0, Math.min(available, partialAmount === undefined ? available : partialAmount));
-    if(s.path === 'loan'){
-      s.debt = s.debt + interestPortion - partial; // accrue interest, subtract whatever was paid
-      s.totalInterestPaid += interestPortion;
-    } else {
-      s.debt -= partial;
-    }
-    s.cash = available - partial;
-    addRow({month:s.month, label:`Partial payment — paid ${fmt(partial)} of ${fmt(due)} due`, amount:-partial, balance:s.debt, isMissed:true});
-    s.debt += LATE_FEE;
-    s.totalLateFees += LATE_FEE;
-    addRow({month:s.month, label:'Late fee — below the amount due', amount:LATE_FEE, balance:s.debt, isMissed:true});
-    s.scoreFactors.missedStreak++;
-    s.scoreFactors.missedPayments++;
-    s.scoreFactors.hasDelinquencyMark = true;
-    s._missedThisMonth = true;
-
-  } else if(resolution === 'overdraft'){
-    // Paid in full and on time — the bank covers the gap. Overdrafts aren't
-    // reported to credit bureaus, so there's no score hit, just a fee. If
-    // cash can't absorb the payment plus that fee, this floors cash at £0
-    // and moves the remainder onto revolving debt instead — the same
-    // shortfall-handling applyEventsAndScoring() already uses for EVENTS —
-    // rather than letting cash spiral arbitrarily negative and re-trigger a
-    // fresh overdraft fee every subsequent month with no way to recover.
-    applyPrincipalPayment(s, due, interestPortion);
-    const cashAfter = available - due - OVERDRAFT_FEE;
-    s.totalOverdraftFees += OVERDRAFT_FEE;
-    addRow({month:s.month, label:`${label} (paid in full)`, amount:-due, balance:s.debt});
-    addRow({month:s.month, label:'Overdraft fee', amount:OVERDRAFT_FEE, balance:Math.max(0, cashAfter)});
-    if(cashAfter < 0){
-      const shortfall = -cashAfter;
-      s.cash = 0;
-      if(s.path === 'card'){
-        s.debt += shortfall;
-        addRow({month:s.month, label:'Overdraft shortfall — no cash cushion, charged to card', amount:-shortfall, balance:s.debt});
-      } else {
-        openBackupCardIfNeeded(s, 'backup card opened to cover an overdraft shortfall');
-        s.backupCardDebt = (s.backupCardDebt||0) + shortfall;
-        addRow({month:s.month, label:'Overdraft shortfall — no cash cushion, charged to backup card', amount:-shortfall, balance:s.backupCardDebt});
-      }
-    } else {
-      s.cash = cashAfter;
-    }
-    if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
-
-  } else if(resolution === 'card'){
-    // Paid in full and on time — just funded by a backup credit card instead
-    // of cash. The original account looks clean; the cost moves to a new,
-    // higher-rate balance that keeps compounding for the rest of the game.
-    applyPrincipalPayment(s, due, interestPortion);
-    s.backupCardDebt = (s.backupCardDebt||0) + due;
-    s.cash = available;
-    openBackupCardIfNeeded(s, 'backup card opened to cover a payment');
-    addRow({month:s.month, label:`${label} — covered by a backup credit card`, amount:-due, balance:s.debt});
-    if(s.scoreFactors.missedStreak > 0) s.scoreFactors.missedStreak = 0;
-  }
+  if(resolution === 'full') resolvePaymentFull(s, due, available, label, interestPortion);
+  else if(resolution === 'partial') resolvePaymentPartial(s, due, available, partialAmount, interestPortion);
+  else if(resolution === 'overdraft') resolvePaymentOverdraft(s, due, available, label, interestPortion);
+  else if(resolution === 'card') resolvePaymentViaBackupCard(s, due, available, label, interestPortion);
 }
 
 /* ---------- finish the month: events, backup-card interest, scoring, bookkeeping ---------- */
@@ -638,7 +689,7 @@ function renderOptionSlider(containerId, options, groupKey, groupLabel){
 
   const range = container.querySelector('.option-range');
   range.addEventListener('input', () => {
-    const i = parseInt(range.value, 10);
+    const i = Number.parseInt(range.value, 10);
     scenarioChoice[groupKey] = options[i].id;
     paintOptionSlider(container, options, i);
   });
@@ -723,7 +774,7 @@ const SHUFFLE_DELAY_GROWTH = 9;
 // motion reads as one continuous glide instead of a series of jump cuts.
 function tweenSliderTo(range, container, options, targetIdx, duration){
   return new Promise(resolve => {
-    const fromVal = parseFloat(range.value);
+    const fromVal = Number.parseFloat(range.value);
     if(fromVal === targetIdx){
       paintOptionSlider(container, options, targetIdx);
       resolve();
@@ -1114,7 +1165,7 @@ function renderPartialSlider(due, available){
   const debtEl = document.getElementById('partial-debt-drop');
   const cashEl = document.getElementById('partial-cash-left');
   function refresh(){
-    const v = parseFloat(slider.value);
+    const v = Number.parseFloat(slider.value);
     payEl.textContent = fmt(v);
     debtEl.textContent = fmt(v);
     cashEl.textContent = fmt(available - v);
@@ -1126,7 +1177,7 @@ function renderPartialSlider(due, available){
   document.getElementById('preset-all').onclick = ()=>{ slider.value = available.toFixed(2); refresh(); };
   document.getElementById('back-to-choices').onclick = ()=>{ renderShortfallChoice(due, available); };
   document.getElementById('confirm-partial').onclick = ()=>{
-    const amt = parseFloat(slider.value);
+    const amt = Number.parseFloat(slider.value);
     uiLocked = false;
     resolveDebtPayment('partial', due, available, amt);
     wrapUpMonth();
@@ -1633,72 +1684,98 @@ function renderCompareColumnsFromSummaries(containerId, summaries, chosenPathId,
   });
 }
 
-// One column's worth of rows — pulled out of the forEach above so its many
-// "only show this row if it's relevant to this path" conditionals don't
-// stack cognitive complexity on top of the loop they'd otherwise be nested
-// inside.
+function lateFeesRowHtml(sum, isDebtPath){
+  if(!isDebtPath || sum.lateFees <= 0) return '';
+  return `<div class="row"><span>Late fees charged</span><span class="v">${fmt(sum.lateFees)}</span></div>`;
+}
+
+function overdraftFeesRowHtml(sum, isDebtPath){
+  if(!isDebtPath || sum.overdraftFees <= 0) return '';
+  return `<div class="row"><span>Overdraft fees charged</span><span class="v">${fmt(sum.overdraftFees)}</span></div>`;
+}
+
+function backupCardRowHtml(sum, isDebtPath){
+  if(!isDebtPath || sum.backupCardDebt <= 0.5) return '';
+  return `<div class="row"><span>— of which, backup card</span><span class="v">${fmt(sum.backupCardDebt)}</span></div>`;
+}
+
+function missedRowHtml(sum, isDebtPath){
+  if(!isDebtPath) return '';
+  const missedColor = sum.missedOrPartialPayments > 0 ? '#A63D40' : 'inherit';
+  return `<div class="row"><span>Payments missed/partial</span><span class="v" style="color:${missedColor};">${sum.missedOrPartialPayments}</span></div>`;
+}
+
+// Save First never has a real debt remaining balance, so it doesn't get its
+// own "Not yet" row here — see secondStatRowHtml, which shows this instead
+// of the debt row for that path.
+function laptopBoughtRowHtml(sum){
+  if(sum.laptopOwned){
+    return `<div class="row"><span>Laptop bought</span><span class="v">Month ${sum.laptopBoughtMonth}</span></div>`;
+  }
+  return `<div class="row"><span style="color:var(--stamp);font-weight:700;">Laptop bought</span><span class="v" style="color:var(--stamp);font-weight:800;font-size:15px;">Not yet — ${fmt(sum.stillShortBy)} short</span></div>`;
+}
+
+// For Save First, "Debt remaining" is always a meaningless £0.00 — that slot
+// in the table instead shows the one thing unique to this path: which month
+// the laptop actually got bought, or (same red/bold treatment as an
+// outstanding balance elsewhere) how much you're still short if it never did
+// within the 24 months.
+function secondStatRowHtml(sum, p, totalDebt){
+  if(p === 'save') return laptopBoughtRowHtml(sum);
+  const debtStandsOut = totalDebt > 0.5;
+  const labelStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:700;"' : '';
+  const valueStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:800;font-size:15px;"' : '';
+  return `<div class="row"><span${labelStyle}>Debt remaining, mo. 24</span><span class="v"${valueStyle}>${fmt(totalDebt)}</span></div>`;
+}
+
+function payoffNoteHtml(sum, p){
+  if(p !== 'card' || !sum.payoffMonths) return '';
+  if(sum.payoffCapped){
+    return `<div class="ladder-note">At this payment rate, the balance would take decades to clear — the payments barely outpace the interest.</div>`;
+  }
+  const monthWord = sum.payoffMonths === 1 ? 'month' : 'months';
+  return `<div class="ladder-note">At this payment rate, clearing the rest would take about <b style="color:var(--stamp);">${sum.payoffMonths} more ${monthWord}</b> — roughly <b style="color:var(--stamp);">${fmt(sum.payoffExtraInterest)}</b> more in interest.</div>`;
+}
+
+function interestRowHtml(sum, p){
+  const label = p === 'save' ? 'Interest earned' : 'Interest paid';
+  const value = p === 'save' ? sum.interestEarned : sum.interestPaid;
+  return `<div class="row"><span>${label}</span><span class="v">${fmt(value)}</span></div>`;
+}
+
+function scoreRowHtml(sum, band, scoreChange){
+  const changeColor = scoreChange >= 0 ? '#2F6F4E' : '#A63D40';
+  const changeSign = scoreChange >= 0 ? '+' : '';
+  return `<div class="row" style="border-bottom:none;font-weight:600;">
+        <span>Credit score, mo. 24</span>
+        <span class="v">${sum.creditScore} <span class="score-pill" style="background:${band.color};">${band.label}</span>
+        <span style="font-weight:400;color:${changeColor};">${changeSign}${scoreChange}</span></span>
+      </div>`;
+}
+
+// One column's worth of rows — pulled out of the forEach above (and split
+// into the small row-builders above) so the many "only show this row if
+// it's relevant to this path" conditionals each carry their own cognitive
+// complexity budget instead of stacking onto one giant function.
 function buildCompareColumnHtml(sum, p, isChosenPath, hTag){
   const band = scoreBand(sum.creditScore);
   const scoreChange = sum.creditScoreChange;
   const totalDebt = sum.debtRemaining + (sum.backupCardDebt||0);
   const isDebtPath = p !== 'save';
-  const debtStandsOut = totalDebt > 0.5;
-
-  const lateFeesRow = isDebtPath && sum.lateFees > 0
-    ? `<div class="row"><span>Late fees charged</span><span class="v">${fmt(sum.lateFees)}</span></div>` : '';
-  const overdraftFeesRow = isDebtPath && sum.overdraftFees > 0
-    ? `<div class="row"><span>Overdraft fees charged</span><span class="v">${fmt(sum.overdraftFees)}</span></div>` : '';
-  const backupCardRow = isDebtPath && sum.backupCardDebt > 0.5
-    ? `<div class="row"><span>— of which, backup card</span><span class="v">${fmt(sum.backupCardDebt)}</span></div>` : '';
-  const missedColor = sum.missedOrPartialPayments > 0 ? '#A63D40' : 'inherit';
-  const missedRow = isDebtPath
-    ? `<div class="row"><span>Payments missed/partial</span><span class="v" style="color:${missedColor};">${sum.missedOrPartialPayments}</span></div>` : '';
-  const debtLabelStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:700;"' : '';
-  const debtValueStyle = debtStandsOut ? ' style="color:var(--stamp);font-weight:800;font-size:15px;"' : '';
-
-  // For Save First, "Debt remaining" is always a meaningless £0.00 — that
-  // slot in the table instead shows the one thing unique to this path: which
-  // month the laptop actually got bought, or (same red/bold treatment as an
-  // outstanding balance elsewhere) how much you're still short if it never
-  // did within the 24 months.
-  let secondStatRow;
-  if(p === 'save'){
-    if(sum.laptopOwned){
-      secondStatRow = `<div class="row"><span>Laptop bought</span><span class="v">Month ${sum.laptopBoughtMonth}</span></div>`;
-    } else {
-      secondStatRow = `<div class="row"><span style="color:var(--stamp);font-weight:700;">Laptop bought</span><span class="v" style="color:var(--stamp);font-weight:800;font-size:15px;">Not yet — ${fmt(sum.stillShortBy)} short</span></div>`;
-    }
-  } else {
-    secondStatRow = `<div class="row"><span${debtLabelStyle}>Debt remaining, mo. 24</span><span class="v"${debtValueStyle}>${fmt(totalDebt)}</span></div>`;
-  }
-
-  let payoffNote = '';
-  if(p === 'card' && sum.payoffMonths){
-    if(sum.payoffCapped){
-      payoffNote = `<div class="ladder-note">At this payment rate, the balance would take decades to clear — the payments barely outpace the interest.</div>`;
-    } else {
-      const monthWord = sum.payoffMonths === 1 ? 'month' : 'months';
-      payoffNote = `<div class="ladder-note">At this payment rate, clearing the rest would take about <b style="color:var(--stamp);">${sum.payoffMonths} more ${monthWord}</b> — roughly <b style="color:var(--stamp);">${fmt(sum.payoffExtraInterest)}</b> more in interest.</div>`;
-    }
-  }
 
   return `
       <${hTag} class="col-heading">${sum.pathName}${isChosenPath?' · played this run':''}</${hTag}>
       <div class="row"><span>What your laptop really cost you</span><span class="v">${fmt(sum.totalPaid)}</span></div>
-      <div class="row"><span>${p==='save'?'Interest earned':'Interest paid'}</span><span class="v">${fmt(p==='save'?sum.interestEarned:sum.interestPaid)}</span></div>
-      ${lateFeesRow}
-      ${overdraftFeesRow}
-      ${secondStatRow}
-      ${backupCardRow}
-      ${payoffNote}
+      ${interestRowHtml(sum, p)}
+      ${lateFeesRowHtml(sum, isDebtPath)}
+      ${overdraftFeesRowHtml(sum, isDebtPath)}
+      ${secondStatRowHtml(sum, p, totalDebt)}
+      ${backupCardRowHtml(sum, isDebtPath)}
+      ${payoffNoteHtml(sum, p)}
       <div class="row"><span>Cash + savings, mo. 24</span><span class="v">${fmt(sum.cashPlusSavings)}</span></div>
       <div class="row"><span>Net worth, mo. 24</span><span class="v">${fmt(sum.netWorth)}</span></div>
-      ${missedRow}
-      <div class="row" style="border-bottom:none;font-weight:600;">
-        <span>Credit score, mo. 24</span>
-        <span class="v">${sum.creditScore} <span class="score-pill" style="background:${band.color};">${band.label}</span>
-        <span style="font-weight:400;color:${scoreChange>=0?'#2F6F4E':'#A63D40'};">${scoreChange>=0?'+':''}${scoreChange}</span></span>
-      </div>
+      ${missedRowHtml(sum, isDebtPath)}
+      ${scoreRowHtml(sum, band, scoreChange)}
     `;
 }
 
@@ -1711,82 +1788,153 @@ function bar(labelText, pct, color, note){
   </div>`;
 }
 
+function onTimeTierColor(onTimePct){
+  if(onTimePct >= 95) return 'var(--score-verygood)';
+  if(onTimePct >= 80) return 'var(--score-fair)';
+  return 'var(--score-poor)';
+}
+
+function utilizationTierColor(avgUtil){
+  if(avgUtil <= 30) return 'var(--score-verygood)';
+  if(avgUtil <= 50) return 'var(--score-fair)';
+  return 'var(--score-poor)';
+}
+
+function renderSaveFactorBreakdown(s){
+  const change = displayScore(s) - STARTING_SCORE;
+  const sign = change >= 0 ? '+' : '';
+  let html = `<p style="font-size:13px;color:#4b4636;margin:6px 0 10px;">You never opened a new credit account, so there's no inquiry, no utilization, and nothing to miss a payment on. Your score barely moved — it's not a reward for saving, just the absence of any new risk.</p>`;
+  html += bar('Net movement', 50, 'var(--score-good)', `${sign}${change} pts`);
+  return html;
+}
+
+function missedPaymentsWarningHtml(f){
+  if(f.missedPayments <= 0) return '';
+  const plural = f.missedPayments > 1 ? 's' : '';
+  return `<div style="background:#f6dcdc;border:1.5px solid var(--stamp);padding:10px 12px;margin-bottom:12px;font-size:13px;color:#5a1f1f;">
+        <b>⚠ ${f.missedPayments} payment${plural} missed.</b> This is the single heaviest factor in the model — worth more, per event, than months of utilization or on-time payments combined. Missed payments also leave a mark that keeps dampening how fast the score can recover afterward.
+      </div>`;
+}
+
+function utilizationOrInstallmentNoteHtml(f){
+  if(state.path === 'card'){
+    const avgUtil = f.utilizationCount ? (f.utilizationSum/f.utilizationCount*100) : 0;
+    return bar('Avg. credit utilization', avgUtil, utilizationTierColor(avgUtil));
+  }
+  return `<p style="font-size:12.5px;color:#4b4636;margin:6px 0;">Installment loans (like this one) don't carry a utilization ratio the way revolving credit cards do — the balance is expected to go down on a fixed schedule.</p>`;
+}
+
+function renderDebtFactorBreakdown(f){
+  const onTimePct = f.paymentTotalMonths ? (f.paymentOnTimeMonths/f.paymentTotalMonths*100) : 100;
+  let html = missedPaymentsWarningHtml(f);
+  html += bar('Payment history (on-time months)', onTimePct, onTimeTierColor(onTimePct));
+  html += utilizationOrInstallmentNoteHtml(f);
+  html += bar('New credit / inquiry impact', 100, 'var(--ink)', '-8 pts, month 1');
+  if(f.debtClearedBonusGiven){
+    html += bar('Paid off in full', 100, 'var(--score-verygood)', '+15 pts');
+  }
+  return html;
+}
+
 function renderFactorBreakdown(results){
   const box = document.getElementById('factor-box');
   const s = results[state.path];
   const f = s.scoreFactors;
-  const band = scoreBand(displayScore(s));
 
   let html = `<div class="eyebrow" style="margin-bottom:4px;">Why your score moved — ${PATH_META[state.path].name}</div>`;
-
-  if(state.path === 'save'){
-    html += `<p style="font-size:13px;color:#4b4636;margin:6px 0 10px;">You never opened a new credit account, so there's no inquiry, no utilization, and nothing to miss a payment on. Your score barely moved — it's not a reward for saving, just the absence of any new risk.</p>`;
-    html += bar('Net movement', 50, 'var(--score-good)', `${displayScore(s)-STARTING_SCORE>=0?'+':''}${displayScore(s)-STARTING_SCORE} pts`);
-  } else {
-    if(f.missedPayments > 0){
-      html += `<div style="background:#f6dcdc;border:1.5px solid var(--stamp);padding:10px 12px;margin-bottom:12px;font-size:13px;color:#5a1f1f;">
-        <b>⚠ ${f.missedPayments} payment${f.missedPayments>1?'s':''} missed.</b> This is the single heaviest factor in the model — worth more, per event, than months of utilization or on-time payments combined. Missed payments also leave a mark that keeps dampening how fast the score can recover afterward.
-      </div>`;
-    }
-    const onTimePct = f.paymentTotalMonths ? (f.paymentOnTimeMonths/f.paymentTotalMonths*100) : 100;
-    html += bar('Payment history (on-time months)', onTimePct, onTimePct>=95?'var(--score-verygood)':onTimePct>=80?'var(--score-fair)':'var(--score-poor)');
-    if(state.path === 'card'){
-      const avgUtil = f.utilizationCount ? (f.utilizationSum/f.utilizationCount*100) : 0;
-      html += bar('Avg. credit utilization', avgUtil, avgUtil<=30?'var(--score-verygood)':avgUtil<=50?'var(--score-fair)':'var(--score-poor)');
-    } else {
-      html += `<p style="font-size:12.5px;color:#4b4636;margin:6px 0;">Installment loans (like this one) don't carry a utilization ratio the way revolving credit cards do — the balance is expected to go down on a fixed schedule.</p>`;
-    }
-    html += bar('New credit / inquiry impact', 100, 'var(--ink)', '-8 pts, month 1');
-    if(f.debtClearedBonusGiven){
-      html += bar('Paid off in full', 100, 'var(--score-verygood)', '+15 pts');
-    }
-  }
+  html += state.path === 'save' ? renderSaveFactorBreakdown(s) : renderDebtFactorBreakdown(f);
   box.innerHTML = html;
+}
+
+function saveLessonIntroHtml(save){
+  return `You waited, but you paid the least. Saving cost you <b>time</b> — the laptop only arrived once you'd fully funded it — and in exchange you <b>earned</b> ${fmt(save.totalInterestEarned)} in interest instead of paying it. That's the trade-off of saving: patience now, in exchange for money kept later.`;
+}
+
+function loanLessonIntroHtml(loan, save){
+  let html = `A personal loan got you the laptop immediately, but you paid <b>${fmt(loan.totalInterestPaid)}</b> in interest for that convenience — the price of borrowing at a fixed, predictable rate. Compare that to saving first: you paid ${fmt(loan.totalInterestPaid + save.totalInterestEarned)} more, total, than the saver did, just to have the laptop 24 months sooner.`;
+  if(loan.scoreFactors.missedPayments > 0){
+    const plural = loan.scoreFactors.missedPayments > 1 ? 's' : '';
+    html += ` Along the way, you missed ${loan.scoreFactors.missedPayments} installment${plural} — the fixed payment is the same every month whether or not your cash flow can absorb it, and when it can't, the loan doesn't bend.`;
+  }
+  return html;
+}
+
+function cardLessonIntroHtml(card){
+  const chosenLabel = state.cardMonthlyChoice === 'min' ? 'minimum payments' : 'a disciplined fixed payment';
+  let html = `You used ${chosenLabel} on the card. Credit cards carry a much higher rate (${(CARD_APR*100).toFixed(1)}% APR here, vs ${(LOAN_APR*100).toFixed(1)}% for the loan) — and minimum payments are designed to stretch debt out for years while interest compounds on top of interest. You paid <b>${fmt(card.totalInterestPaid)}</b> in interest`;
+  html += card.debt > 0
+    ? `, and still owe <b>${fmt(card.debt)}</b> at month 24 — the debt outlived the laptop's warranty.`
+    : `.`;
+  if(state.cardMonthlyChoice === 'min'){
+    html += ` Notice also what happened when an unplanned expense hit: with no savings cushion, it went straight onto the card, growing the balance further. That's the credit-card trap — it doesn't just cost more, it makes emergencies more expensive too.`;
+  } else if(card.scoreFactors.missedPayments > 0){
+    html += ` Notice the trade-off: paying more than the minimum shrinks the balance faster, but it also leaves a thinner cash cushion — and when an expense hit a stretched budget, a payment got skipped entirely. Minimum payments are "safer" for your cash flow precisely because they demand so little of it; that ease is exactly what makes them a trap over the long run.`;
+  }
+  return html;
+}
+
+function lessonIntroHtml(results){
+  if(state.path === 'save') return saveLessonIntroHtml(results.save);
+  if(state.path === 'loan') return loanLessonIntroHtml(results.loan, results.save);
+  return cardLessonIntroHtml(results.card);
+}
+
+function missedPaymentNoteHtml(s){
+  if(s.scoreFactors.missedPayments <= 0) return '';
+  const worstPenalty = missedPaymentPenalty(1);
+  return ` A missed or partial payment alone cost as much as ${Math.abs(worstPenalty)} points in a single month — more than the entire card path's utilization swing typically does across the whole two years.`;
+}
+
+function overdraftNoteHtml(s){
+  if(s.totalOverdraftFees <= 0) return '';
+  const times = Math.round(s.totalOverdraftFees/OVERDRAFT_FEE);
+  const plural = s.totalOverdraftFees > OVERDRAFT_FEE ? 's' : '';
+  return ` You used overdraft ${times} time${plural} to keep a payment on time — it protected your score (overdrafts aren't reported to credit bureaus), but cost ${fmt(s.totalOverdraftFees)} in bank fees and left cash tighter for the months after.`;
+}
+
+function backupCardDebtNoteHtml(s){
+  if(s.backupCardDebt <= 0.5) return '';
+  return ` You also ended the game carrying <b>${fmt(s.backupCardDebt)}</b> on a backup card that was never modeled as being paid down — a reminder that "cover it with a different card" doesn't make a cost disappear, it just moves it somewhere higher-interest and easier to lose track of.`;
+}
+
+function saveScoreClosingHtml(scoreChange){
+  const sign = scoreChange >= 0 ? '+' : '';
+  return ` Your credit score barely moved (${sign}${scoreChange} pts) — saving doesn't build credit history, it just avoids putting any at risk.`;
+}
+
+function loanScoreClosingHtml(scoreNow, scoreChange){
+  const sign = scoreChange >= 0 ? '+' : '';
+  return ` Your credit score ended at <b>${scoreNow}</b> (${sign}${scoreChange} from where you started) — a small inquiry dip up front, recovered and then some through 24 straight on-time payments and paying the loan off in full.`;
+}
+
+function cardScoreClosingHtml(scoreNow, scoreChange){
+  const sign = scoreChange >= 0 ? '+' : '';
+  const strategyNote = state.cardMonthlyChoice === 'min'
+    ? 'Minimum payments kept utilization high for most of the two years, which is the single biggest drag here.'
+    : 'Paying more than the minimum brought utilization down faster, which is what let the score recover.';
+  return ` Your credit score ended at <b>${scoreNow}</b> (${sign}${scoreChange}) — driven mostly by how high your balance sat relative to your £${CARD_LIMIT.toLocaleString()} limit each month. ${strategyNote}`;
+}
+
+function scoreClosingHtml(scoreNow, scoreChange){
+  if(state.path === 'save') return saveScoreClosingHtml(scoreChange);
+  if(state.path === 'loan') return loanScoreClosingHtml(scoreNow, scoreChange);
+  return cardScoreClosingHtml(scoreNow, scoreChange);
 }
 
 function renderLesson(results){
   const box = document.getElementById('lesson-box');
   const s = results[state.path];
-  const save = results.save, loan = results.loan, card = results.card;
   const best = Object.entries(results).sort((a,b)=> netWorth(b[1]) - netWorth(a[1]))[0][0];
-  let html = '';
-  if(state.path === 'save'){
-    html = `You waited, but you paid the least. Saving cost you <b>time</b> — the laptop only arrived once you'd fully funded it — and in exchange you <b>earned</b> ${fmt(save.totalInterestEarned)} in interest instead of paying it. That's the trade-off of saving: patience now, in exchange for money kept later.`;
-  } else if(state.path === 'loan'){
-    html = `A personal loan got you the laptop immediately, but you paid <b>${fmt(loan.totalInterestPaid)}</b> in interest for that convenience — the price of borrowing at a fixed, predictable rate. Compare that to saving first: you paid ${fmt(loan.totalInterestPaid + save.totalInterestEarned)} more, total, than the saver did, just to have the laptop 24 months sooner.`;
-    if(loan.scoreFactors.missedPayments > 0){
-      html += ` Along the way, you missed ${loan.scoreFactors.missedPayments} installment${loan.scoreFactors.missedPayments>1?'s':''} — the fixed payment is the same every month whether or not your cash flow can absorb it, and when it can't, the loan doesn't bend.`;
-    }
-  } else {
-    const chosenLabel = state.cardMonthlyChoice === 'min' ? 'minimum payments' : 'a disciplined fixed payment';
-    html = `You used ${chosenLabel} on the card. Credit cards carry a much higher rate (${(CARD_APR*100).toFixed(1)}% APR here, vs ${(LOAN_APR*100).toFixed(1)}% for the loan) — and minimum payments are designed to stretch debt out for years while interest compounds on top of interest. You paid <b>${fmt(card.totalInterestPaid)}</b> in interest`;
-    if(card.debt > 0){ html += `, and still owe <b>${fmt(card.debt)}</b> at month 24 — the debt outlived the laptop's warranty.`; }
-    else { html += `.`; }
-    if(state.cardMonthlyChoice === 'min'){
-      html += ` Notice also what happened when an unplanned expense hit: with no savings cushion, it went straight onto the card, growing the balance further. That's the credit-card trap — it doesn't just cost more, it makes emergencies more expensive too.`;
-    } else if(card.scoreFactors.missedPayments > 0){
-      html += ` Notice the trade-off: paying more than the minimum shrinks the balance faster, but it also leaves a thinner cash cushion — and when an expense hit a stretched budget, a payment got skipped entirely. Minimum payments are "safer" for your cash flow precisely because they demand so little of it; that ease is exactly what makes them a trap over the long run.`;
-    }
-  }
-  if(s.scoreFactors.missedPayments > 0){
-    const worstPenalty = missedPaymentPenalty(1);
-    html += ` A missed or partial payment alone cost as much as ${Math.abs(worstPenalty)} points in a single month — more than the entire card path's utilization swing typically does across the whole two years.`;
-  }
-  if(s.totalOverdraftFees > 0){
-    html += ` You used overdraft ${Math.round(s.totalOverdraftFees/OVERDRAFT_FEE)} time${s.totalOverdraftFees>OVERDRAFT_FEE?'s':''} to keep a payment on time — it protected your score (overdrafts aren't reported to credit bureaus), but cost ${fmt(s.totalOverdraftFees)} in bank fees and left cash tighter for the months after.`;
-  }
-  if(s.backupCardDebt > 0.5){
-    html += ` You also ended the game carrying <b>${fmt(s.backupCardDebt)}</b> on a backup card that was never modeled as being paid down — a reminder that "cover it with a different card" doesn't make a cost disappear, it just moves it somewhere higher-interest and easier to lose track of.`;
-  }
+
+  let html = lessonIntroHtml(results);
+  html += missedPaymentNoteHtml(s);
+  html += overdraftNoteHtml(s);
+  html += backupCardDebtNoteHtml(s);
+
   const scoreNow = displayScore(s);
   const scoreChange = scoreNow - STARTING_SCORE;
-  if(state.path === 'save'){
-    html += ` Your credit score barely moved (${scoreChange>=0?'+':''}${scoreChange} pts) — saving doesn't build credit history, it just avoids putting any at risk.`;
-  } else if(state.path === 'loan'){
-    html += ` Your credit score ended at <b>${scoreNow}</b> (${scoreChange>=0?'+':''}${scoreChange} from where you started) — a small inquiry dip up front, recovered and then some through 24 straight on-time payments and paying the loan off in full.`;
-  } else {
-    html += ` Your credit score ended at <b>${scoreNow}</b> (${scoreChange>=0?'+':''}${scoreChange}) — driven mostly by how high your balance sat relative to your £${CARD_LIMIT.toLocaleString()} limit each month. ${state.cardMonthlyChoice==='min' ? 'Minimum payments kept utilization high for most of the two years, which is the single biggest drag here.' : 'Paying more than the minimum brought utilization down faster, which is what let the score recover.'}`;
-  }
+  html += scoreClosingHtml(scoreNow, scoreChange);
+
   html += `<br><br>Across all three paths this run, <b>${PATH_META[best].name}</b> left you with the highest net worth at month 24: ${fmt(netWorth(results[best]))}.`;
   box.innerHTML = html;
 }
